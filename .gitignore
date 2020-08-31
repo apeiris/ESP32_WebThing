@@ -3,4 +3,4 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-.users/mapei/OneDrive/Documents/PlatformIO/Projects/MAX7219/password.h
+.gitignore
