@@ -122,7 +122,7 @@ void setup(void)
     digitalWrite(ledPin, blink ? LOW : HIGH); // active low led
     blink = !blink;
   }
-  digitalWrite(ledPin, HIGH); // active low led
+  digitalWrite(ledPin, HIGH); // turn off active low led
 
   Serial.println("");
   Serial.print("Connected to ");
@@ -161,18 +161,6 @@ void setup(void)
   analogWriteRange(255);
 #endif
 
-  /*
-  lc.setChar(0, 0, '7', false);
-  lc.setChar(0, 1, '6', false);
-  lc.setChar(0, 2, '5', false);
-  lc.setChar(0, 3, '4', false);
-  lc.setChar(0, 3, '3', false);
-  
-
-  lc.setChar(0, 5, '2', false);
-  lc.setChar(0, 6, '1', false);
-  lc.setChar(0, 7, '0', false);
-  */
   delay(1000);
 }
 
@@ -199,16 +187,12 @@ void loop(void)
   //digitalWrite(ledPin, micros() % 0xFFFF ? HIGH : LOW); // Heartbeat
 
   digitalWrite(23, HIGH);
-  digitalWrite(ledPin, HIGH);
 
-  delay(100);
 
-  digitalWrite(23, LOW);
-  digitalWrite(ledPin, LOW);
-  delay(100);
+ 
 
-  if (micros() % 0xFFFF == LOW)
-    printf(" ledPin**=%i  ---> %i\n ", ledPin, HIGH);
+
+
   adapter->update();
 
   bool on = deviceOn.getValue().boolean;
