@@ -18,15 +18,13 @@
 #include <SPI.h>
 #include "LedControl.h"
 
-
 #ifdef ESP32
 #include <analogWrite.h>
 #endif
 
 using namespace std;
 // TODO: Hardcode your wifi credentials here (and keep it private)
-const char *ssid = "Peiris_Wifi";
-const char ****REMOVED*** = "22051954";
+
 
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
@@ -80,7 +78,6 @@ void setupLamp(void)
 LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
 
-
 //------------------------------------------------------------------
 void setup(void)
 {
@@ -102,9 +99,15 @@ void setup(void)
   lc.shutdown(0, false);
   lc.setIntensity(0, 10);
   // -- turn off display
-  for (int i = 0; i < 200000; i++)
+  for (int i = 0; i <= 99999999; i++)
   {
-    lc.printF(i, (char *)"%.1f");
+    lc.printF(i, (char *)"%.0f");
+    if (i == 99999999)
+    {
+      i = 0;
+      lc.clearDisplay(0);
+      continue;
+    }
   }
 
   WiFi.begin(ssid, ***REMOVED***);
