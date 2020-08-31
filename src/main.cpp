@@ -99,9 +99,9 @@ void setup(void)
   lc.shutdown(0, false);
   lc.setIntensity(0, 10);
   // -- turn off display
-  for (int i = 0; i <= 99999999; i++)
+  for (int i = 0; i <= 9999; i++)
   {
-    lc.printF(i, (char *)"%.0f");
+    lc.printF(i, (char *)"%.2f");
     if (i == 99999999)
     {
       i = 0;
