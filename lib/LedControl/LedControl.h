@@ -132,6 +132,7 @@ class LedControl {
         /*
          * print a given n with the  specified format
          * the format  should be  standard printf specifier
+         * eg "%0.2f" 
          */
         void printF(float n, char *format);
 
