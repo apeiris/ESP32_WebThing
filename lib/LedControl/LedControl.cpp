@@ -129,7 +129,7 @@ void LedControl::printF(float n, char *format)
   {
     b = i - 1 == dp ? true : false;
     setChar(0, i, s[l - i], b);
-    printf("i=%i :  %c  > b = %s dp=%i \n", i, s[l - i], btoa(b), dp);
+  //  printf("i=%i :  %c  > b = %s dp=%i \n", i, s[l - i], btoa(b), dp);
   }
 }
 
