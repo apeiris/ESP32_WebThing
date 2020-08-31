@@ -4,4 +4,7 @@
 .vscode/launch.json
 .vscode/ipch
 .gitignore
+<<<<<<< HEAD
 .users/mapei/OneDrive/Documents/PlatformIO/Projects/MAX7219/password.h
+=======
+>>>>>>> f1fc5657cff1ceb11d8bd6de1744d0f5ec44fc4b
