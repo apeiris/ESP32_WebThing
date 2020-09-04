@@ -45,18 +45,25 @@ const int anzMAX = 1;  //Anzahl der kaskadierten  Module = Number of Cascaded mo
 // nullptr};
 
 WebThingAdapter *adapter;
+ThingActionObject *action_generator(DynamicJsonDocument *);
 
-const char *deviceTypes[] = {"Light", "OnOffSwitch", "ColorControl", nullptr};
+const char *deviceTypes[] = {"Light", "OnOffSwitch","DimLevel" "ColorControl", nullptr};
 ThingDevice device("ABC", "ABC", deviceTypes);
-ThingDevice redLed1("RED LED 1", "LED", deviceTypes);
+
 
 ThingProperty deviceOn("on", "Whether the led is turned on", BOOLEAN,
                        "OnOffProperty");
-ThingProperty redLed1On("on", "Where Red Led1 turned on", BOOLEAN, "LedOnOffProperty");
-ThingProperty deviceLevel("level", "The level of light from 0-100", NUMBER,
+
+ThingProperty deviceBrightness("brightness", "The level of light from 0-100", INTEGER,
                           "BrightnessProperty");
 ThingProperty deviceColor("color", "The color of light in RGB", STRING,
                           "ColorProperty");
+StaticJsonDocument<256> fadeInput;
+JsonObject fadeInputObj = fadeInput.to<JsonObject>();
+ThingAction fade("fade","Fade","Fade the lamp to given level","FadeAction",&fadeInputObj,action_generator);
+ThingEvent overheated("overheated","The temperature exceded upper Threshold",NUMBER,"OverheatedEvent");
+
+                          
 // think property for device2
 bool lastOn = false;
 String lastColor = "#ffffff";
@@ -132,12 +139,14 @@ void setup(void)
   adapter = new WebThingAdapter("rgb-lamp", WiFi.localIP());
 
   device.addProperty(&deviceOn);
+  device.addEvent(&device_level_changed);
   ThingPropertyValue levelValue;
   levelValue.number = 100; // default brightness TODO
   deviceLevel.setValue(levelValue);
   device.addProperty(&deviceLevel);
+  
 
-  redLed1.addProperty(&redLed1On);
+
 
   // optional properties
   // deviceColor.propertyEnum = valEnum;
@@ -148,7 +157,7 @@ void setup(void)
   colorValue.string = &lastColor; // default color is white
   deviceColor.setValue(colorValue);
   device.addProperty(&deviceColor);
-
+  
   adapter->addDevice(&device);
   adapter->addDevice(&redLed1);
   Serial.println("Starting HTTP server");
@@ -180,6 +189,7 @@ void update(String *color, int const level)
   analogWrite(redPin, red * dim);
   analogWrite(greenPin, green * dim);
   analogWrite(bluePin, blue * dim);
+  //printf("Color %s  level=%.2f \n",color,dim);
 }
 
 void loop(void)
