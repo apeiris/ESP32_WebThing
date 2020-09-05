@@ -49,7 +49,7 @@ ThingActionObject *action_generator(DynamicJsonDocument *);
 
 const char *deviceTypes[] = {"Light", "OnOffSwitch","DimLevel" "ColorControl", nullptr};
 ThingDevice device("ABC", "ABC", deviceTypes);
-
+ 
 
 ThingProperty deviceOn("on", "Whether the led is turned on", BOOLEAN,
                        "OnOffProperty");
