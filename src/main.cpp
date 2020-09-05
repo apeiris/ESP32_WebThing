@@ -136,7 +136,12 @@ void setup(void)
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-  adapter = new WebThingAdapter("rgb-lamp", WiFi.localIP());
+  device1 = new WebThingAdapter("Lamp with thermistor", WiFi.localIP());
+  
+  device.description="A web connected lamp";
+  deviceOn.title="On/Off";
+
+  
 
   device.addProperty(&deviceOn);
   device.addEvent(&device_level_changed);
