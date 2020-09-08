@@ -32,6 +32,7 @@ using namespace std;
 const int ledPin = LED_BUILTIN;
 #else
 const int ledPin = 2; // manually configure LED pin was 13 2 is blue led built in
+const int lampPin = 2;
 #endif
 // pin definitions
 const int pinCS = 15;  // Chip Select
@@ -43,45 +44,29 @@ const int anzMAX = 1;  //Anzahl der kaskadierten  Module = Number of Cascaded mo
 // const char * valEnum[5] = {"RED", "GREEN", "BLACK", "white", nullptr};
 // const char * valEnum[5] = {"#db4a4a", "#4adb58", "000000", "ffffff",
 // nullptr};
-
-WebThingAdapter *adapter;
+long mmap(long x, long in_min, long in_max, long out_min, long out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+WebThingAdapter *adapter; // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
-
-const char *deviceTypes[] = {"Light", "OnOffSwitch","DimLevel" "ColorControl", nullptr};
-ThingDevice device("ABC", "ABC", deviceTypes);
-
-    
-  
-ThingProperty deviceOn("on", "Whether the led is turned on", BOOLEAN,
-                       "OnOffProperty");
-
-ThingProperty deviceBrightness("brightness", "The level of light from 0-100", INTEGER,
-                          "BrightnessProperty");
-ThingProperty deviceColor("color", "The color of light in RGB", STRING,
-                          "ColorProperty");
+const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
+ThingDevice lamp("ABC", "ABC", lampTypes);
+ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
+ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
 StaticJsonDocument<256> fadeInput;
 JsonObject fadeInputObj = fadeInput.to<JsonObject>();
-ThingAction fade("fade","Fade","Fade the lamp to given level","FadeAction",&fadeInputObj,action_generator);
-ThingEvent overheated("overheated","The temperature exceded upper Threshold",NUMBER,"OverheatedEvent");
+ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
+ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
 
-                          
 // think property for device2
-bool lastOn = false;
+
 String lastColor = "#ffffff";
 
 const unsigned char redPin = 12;
 const unsigned char greenPin = 13;
 const unsigned char bluePin = 14;
 
-void setupLamp(void)
-{
-  pinMode(redPin, OUTPUT);
-  digitalWrite(redPin, HIGH);
-  pinMode(greenPin, OUTPUT);
-  digitalWrite(greenPin, HIGH);
-  pinMode(bluePin, OUTPUT);
-  digitalWrite(bluePin, HIGH);
-}
 //-------------------------------------------------------------------
 LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
@@ -91,8 +76,6 @@ void setup(void)
 {
   pinMode(ledPin, OUTPUT);
   digitalWrite(ledPin, HIGH);
-
-  setupLamp();
 
   Serial.begin(115200);
   Serial.println("");
@@ -107,17 +90,7 @@ void setup(void)
   lc.shutdown(0, false);
   lc.setIntensity(0, 10);
   // -- turn off display
-  for (int i = 0; i <= 9999; i++)
-  {
-    lc.printF(i, (char *)"%.2f");
-    if (i == 99999999)
-    {
-      i = 0;
-      lc.clearDisplay(0);
-      continue;
-    }
-  }
-
+  lc.clearDisplay(0);
   WiFi.begin(ssid, ***REMOVED***);
   Serial.println("");
 
@@ -137,65 +110,42 @@ void setup(void)
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-  device1 = new WebThingAdapter("Lamp with thermistor", WiFi.localIP());
-  
-  device.description="A web connected lamp";
-  deviceOn.title="On/Off";
 
-  
+  // THINGS BEGIN HERE
 
-  device.addProperty(&deviceOn);
-  device.addEvent(&device_level_changed);
-  ThingPropertyValue levelValue;
-  levelValue.number = 100; // default brightness TODO
-  deviceLevel.setValue(levelValue);
-  device.addProperty(&deviceLevel);
-  
+  adapter = new WebThingAdapter("led-lamp", WiFi.localIP()); // instantiate the adapter
 
+  lamp.description = "A web conneced lamp";
+  lamp.title = "On/Off";
+  lamp.addProperty(&lampOn);
+  //---
+  lampLevel.title = "Brightness";
+  lampLevel.minimum = 0;
+  lampLevel.maximum = 100;
+  lampLevel.unit = "%";
+  lamp.addProperty(&lampLevel);
 
+  fadeInputObj["type"] = "object";
+  JsonObject fadeInputProperties = fadeInputObj.createNestedObject("properties");
 
-  // optional properties
-  // deviceColor.propertyEnum = valEnum;
-  // deviceColor.readOnly = true;
-  // deviceColor.unit = "HEX";
+  JsonObject brightnessInput = fadeInputProperties.createNestedObject("brightness");
+  brightnessInput["type"] = "integer";
+  brightnessInput["minimum"] = 0;
+  brightnessInput["maximum"] = 100;
+  brightnessInput["unit"] = "percent";
 
-  ThingPropertyValue colorValue;
-  colorValue.string = &lastColor; // default color is white
-  deviceColor.setValue(colorValue);
-  device.addProperty(&deviceColor);
-  
-  adapter->addDevice(&device);
-  adapter->addDevice(&redLed1);
-  Serial.println("Starting HTTP server");
+  JsonObject durationInput = fadeInputProperties.createNestedObject("duration");
+  durationInput["type"] = "integer";
+  durationInput["minimum"] = 1;
+  durationInput["unit"] = "milliseconds";
+
+  lamp.addAction(&fade);
+
+  overheated.unit = "degree C";
+  lamp.addEvent(&overheated);
+
+  adapter->addDevice(&lamp);
   adapter->begin();
-  Serial.print("http://");
-  Serial.print(WiFi.localIP());
-  Serial.print("/things/");
-  Serial.println(device.id);
-#ifdef analogWriteRange
-  analogWriteRange(255);
-#endif
-
-  delay(1000);
-}
-
-void update(String *color, int const level)
-{
-  if (!color)
-    return;
-  float dim = level / 100.;
-  int red, green, blue;
-  if (color && (color->length() == 7) && color->charAt(0) == '#')
-  {
-    const char *hex = 1 + (color->c_str()); // skip leading '#'
-    sscanf(0 + hex, "%2x", &red);
-    sscanf(2 + hex, "%2x", &green);
-    sscanf(4 + hex, "%2x", &blue);
-  }
-  analogWrite(redPin, red * dim);
-  analogWrite(greenPin, green * dim);
-  analogWrite(bluePin, blue * dim);
-  //printf("Color %s  level=%.2f \n",color,dim);
 }
 
 void loop(void)
@@ -204,26 +154,35 @@ void loop(void)
 
   digitalWrite(23, HIGH);
 
-
- 
-
-
-
   adapter->update();
+}
+void do_fade(const JsonVariant &input)
+{
+  JsonObject inputObj = input.as<JsonObject>();
+  long long int duration = inputObj["duration"];
+  long long int brightness = inputObj["brightness"];
 
-  bool on = deviceOn.getValue().boolean;
-  int level = deviceLevel.getValue().number;
-  update(&lastColor, on ? level : 0);
+  delay(duration);
 
-  if (on != lastOn)
-  {
-    Serial.print(device.id);
-    Serial.print(": on: ");
-    Serial.print(on);
-    Serial.print(", level: ");
-    Serial.print(level);
-    Serial.print(", color: ");
-    Serial.println(lastColor);
-  }
-  lastOn = on;
+  ThingDataValue value = {.integer = brightness};
+  lampLevel.setValue(value);
+     
+  int level = Arduino_h::map(brightness, 0, 100, 255, 0);
+  printf("value =%i , level(mapped)=%i\n", value.integer, level);
+  analogWrite(lampPin, level, 255);
+  lc.clearDisplay(0);
+  lc.printF((float)brightness, (char *)"%.2f");
+  ThingDataValue val;
+  val.number = 102;
+
+  ThingEventObject *ev = new ThingEventObject("overheated", NUMBER, val);
+  lamp.queueEventObject(ev);
+}
+ThingActionObject *action_generator(DynamicJsonDocument *input)
+{
+  String output;
+  serializeJson(*input, output);
+  printf("Going to print \n");
+  printf("printing ->input %s\n", output.c_str());
+  return new ThingActionObject("fade", input, do_fade, nullptr);
 }
