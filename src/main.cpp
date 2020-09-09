@@ -166,7 +166,7 @@ void do_fade(const JsonVariant &input)
 
   ThingDataValue value = {.integer = brightness};
   lampLevel.setValue(value);
-     
+ // testing git commit 1
   int level = Arduino_h::map(brightness, 0, 100, 255, 0);
   printf("value =%i , level(mapped)=%i\n", value.integer, level);
   analogWrite(lampPin, level, 255);
