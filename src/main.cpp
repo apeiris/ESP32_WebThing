@@ -2,6 +2,9 @@
 //test two
 // test one 
 
+     
+
+
 // -*- mode: c++;  c-basic-offset: 2 -*-
 /**
  * Simple server compliant with Mozilla's proposed WoT API
@@ -27,8 +30,6 @@
 #endif
 
 using namespace std;
-// TODO: Hardcode your wifi credentials here (and keep it private)
-
 #include "password.h"
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
