@@ -184,8 +184,8 @@ void do_fade(const JsonVariant &input)
 
      
 
-  int level = Arduino_h::map(brightness, 0, 100, 255, 0);
-  printf("value =%i , level(mapped)=%i\n", value.integer, level);
+  int level =(int) Arduino_h::map(brightness, 0, 100, 255, 0);
+  printf("value =%i , level(mapped)=%d \n",(int) value.integer, level);
   analogWrite(lampPin, level, 255);
   lc.clearDisplay(0);
   lc.printF((float)brightness, (char *)"%.2f");
