@@ -1,3 +1,4 @@
+// test one 
 // -*- mode: c++;  c-basic-offset: 2 -*-
 /**
  * Simple server compliant with Mozilla's proposed WoT API
@@ -166,11 +167,9 @@ void do_fade(const JsonVariant &input)
 
   ThingDataValue value = {.integer = brightness};
   lampLevel.setValue(value);
-<<<<<<< HEAD
- // testing git commit 1
-=======
+
      
->>>>>>> 5719dc87806bc06356ca01386640e584212bbd90
+
   int level = Arduino_h::map(brightness, 0, 100, 255, 0);
   printf("value =%i , level(mapped)=%i\n", value.integer, level);
   analogWrite(lampPin, level, 255);
