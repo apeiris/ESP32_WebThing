@@ -1,3 +1,4 @@
+// test 7
 // test 6 
 // test five
 //test four
@@ -8,6 +9,8 @@
      
 
 
+
+    
 // -*- mode: c++;  c-basic-offset: 2 -*-
 /**
  * Simple server compliant with Mozilla's proposed WoT API
