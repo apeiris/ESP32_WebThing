@@ -6,3 +6,4 @@
 .gitignore
 .users/mapei/OneDrive/Documents/PlatformIO/Projects/MAX7219/src/password.h
 
+src/password.h
