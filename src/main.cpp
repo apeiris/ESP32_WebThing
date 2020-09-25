@@ -1,10 +1,11 @@
+// current device mac 2462ABCEBDBC
+// * Tested on ESP8266, ESP32, Arduino boards with WINC1500 modules (shields or
 // t11
-    
+
 // -*- mode: c++;  c-basic-offset: 2 -*-
 /**
  * Simple server compliant with Mozilla's proposed WoT API
  * Originally based on the HelloServer example
- * Tested on ESP8266, ESP32, Arduino boards with WINC1500 modules (shields or
  * MKR1000)
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
@@ -20,21 +21,28 @@
 #include <SPI.h>
 #include "LedControl.h"
 
-#ifdef ESP32
+#include <Adafruit_AHTX0.h>
 #include <analogWrite.h>
-#endif
+#include <MySQL_Connection.h>
+#include <MySQL_Cursor.h>
 
 using namespace std;
 #include "password.h"
+IPAddress sqlIP(192, 168, 0, 10);
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
+const int pushInterval = 120000;
 #if defined(LED_BUILTIN)
 const int ledPin = LED_BUILTIN;
 #else
 const int ledPin = 2; // manually configure LED pin was 13 2 is blue led built in
 const int lampPin = 2;
 #endif
-// pin definitions
+// AHT10 pins
+const int pinSDA = 5;  // white wire
+const int pinSCL = 17; // the purple
+
+// pin definitions for MAX7129
 const int pinCS = 15;  // Chip Select
 const int pinCLK = 18; // Clock pin
 const int pinDIN = 23; // Data
@@ -42,8 +50,7 @@ const int anzMAX = 1;  //Anzahl der kaskadierten  Module = Number of Cascaded mo
 
 // for optional properties
 // const char * valEnum[5] = {"RED", "GREEN", "BLACK", "white", nullptr};
-// const char * valEnum[5] = {"#db4a4a", "#4adb58", "000000", "ffffff",
-// nullptr};
+
 long mmap(long x, long in_min, long in_max, long out_min, long out_max)
 {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -52,12 +59,17 @@ WebThingAdapter *adapter; // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
 const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
 ThingDevice lamp("ABC", "ABC", lampTypes);
+
 ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
 ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
+
 StaticJsonDocument<256> fadeInput;
 JsonObject fadeInputObj = fadeInput.to<JsonObject>();
-ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
-ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
+ThingAction fade("fade", "Fade", "Fade the lamp to a given level",
+                 "FadeAction", &fadeInputObj, action_generator);
+ThingEvent overheated("overheated",
+                      "The lamp has exceeded its safe operating temperature",
+                      NUMBER, "OverheatedEvent");
 
 // think property for device2
 
@@ -66,53 +78,61 @@ String lastColor = "#ffffff";
 const unsigned char redPin = 12;
 const unsigned char greenPin = 13;
 const unsigned char bluePin = 14;
-
-//-------------------------------------------------------------------
+//------------Adafruit Lib -----------------------------------------
+// the AHT must be connected to Bords SDA->GPIO21 and SCL ->GPIO22
+//  to detect the sensor board
+Adafruit_AHTX0 aht;
+//------------------------------------------------------------------
 LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
+WiFiClient client;
+MySQL_Connection sqlConn(&client);
+MySQL_Cursor *cursor;
 
-//------------------------------------------------------------------
 void setup(void)
 {
   pinMode(ledPin, OUTPUT);
   digitalWrite(ledPin, HIGH);
-
   Serial.begin(115200);
-  Serial.println("");
-  Serial.print("Connecting to \"");
-  Serial.print(ssid);
-  Serial.println("\"");
-
+  printf("Connecting to %s \n", ssid);
+  //------------------Initialize MAX7219-------------
+  printf("Initializing MAX7219..\n");
+  lc.shutdown(0, false);
+  lc.setIntensity(0, 100);
+  lc.clearDisplay(0);
+  lc.printF(0, (char *)"%0.2f");
+  //-----------Detect AHT ----------------------------
+  if (!aht.begin())
+  {
+    printf("Could not fine AHT ! \n");
+  }
+  else
+    printf("AHT10 or AHT20 found \n");
+  //--------------------------------------------------
   WiFi.mode(WIFI_STA);
 
-  //------------------Initialize MAX7219-------------
-  printf("Initializing MAX77219..\n");
-  lc.shutdown(0, false);
-  lc.setIntensity(0, 10);
-  // -- turn off display
-  lc.clearDisplay(0);
   WiFi.begin(ssid, password);
-  Serial.println("");
-
   // Wait for connection
   bool blink = true;
   while (WiFi.status() != WL_CONNECTED)
   {
-    delay(500);
-    Serial.print(".");
+    printf(".");
     digitalWrite(ledPin, blink ? LOW : HIGH); // active low led
+    digitalWrite(ledPin, blink);
     blink = !blink;
+    delay(80);
   }
+  printf("Now connection to MYSql \n");
+  if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
+    printf("Connected to SQL On ->%s \n", (char *)sqlIP.toString().c_str());
+  else
+  {
+    printf("Oh.. could not connect to SQL %s \n ", (char *)sqlIP.toString().c_str());
+  };
+
   digitalWrite(ledPin, HIGH); // turn off active low led
-
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
+  printf("\nConnected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
   // THINGS BEGIN HERE
-
   adapter = new WebThingAdapter("led-lamp", WiFi.localIP()); // instantiate the adapter
 
   lamp.description = "A web conneced lamp";
@@ -147,14 +167,23 @@ void setup(void)
   adapter->addDevice(&lamp);
   adapter->begin();
 }
+sensors_event_t hum, temp;
+static int i=0;
+void recordEnv()
+{
+  aht.getEvent(&hum, &temp);
+  //sprintf()
+      printf("%05d Humidity=%.2lf : Tempurature=%.2lf\n",++i, hum.relative_humidity, temp.temperature);
+}
 
 void loop(void)
 {
-  //digitalWrite(ledPin, micros() % 0xFFFF ? HIGH : LOW); // Heartbeat
 
   digitalWrite(23, HIGH);
 
   adapter->update();
+  recordEnv();
+  delay(pushInterval);
 }
 void do_fade(const JsonVariant &input)
 {
@@ -167,10 +196,8 @@ void do_fade(const JsonVariant &input)
   ThingDataValue value = {.integer = brightness};
   lampLevel.setValue(value);
 
-     
-
-  int level =(int) Arduino_h::map(brightness, 0, 100, 255, 0);
-  printf("value =%i , level(mapped)=%d \n",(int) value.integer, level);
+  int level = (int)Arduino_h::map(brightness, 0, 100, 255, 0);
+  printf("value =%i , level(mapped)=%d \n", (int)value.integer, level);
   analogWrite(lampPin, level, 255);
   lc.clearDisplay(0);
   lc.printF((float)brightness, (char *)"%.2f");
