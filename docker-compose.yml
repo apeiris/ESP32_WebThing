@@ -1,0 +1,6 @@
+version: '3.4'
+
+services:
+  max7219:
+    image: max7219
+    build: .
