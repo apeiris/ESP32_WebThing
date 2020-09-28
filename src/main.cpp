@@ -11,6 +11,9 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * 
+ * this code is based on
+ * https://github.com/WebThingsIO/webthing-arduino/blob/master/examples/LEDLamp/LEDLamp.ino
  */
 
 #define LARGE_JSON_BUFFERS 1
@@ -26,12 +29,14 @@
 #include <MySQL_Connection.h>
 #include <MySQL_Cursor.h>
 
+#include <map>
+
 using namespace std;
 #include "password.h"
 IPAddress sqlIP(192, 168, 0, 10);
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
-const int pushInterval = 120000;
+#define  pushInterval  (60000/30)
 #if defined(LED_BUILTIN)
 const int ledPin = LED_BUILTIN;
 #else
@@ -59,17 +64,19 @@ WebThingAdapter *adapter; // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
 const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
 ThingDevice lamp("ABC", "ABC", lampTypes);
-
 ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
 ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
-
 StaticJsonDocument<256> fadeInput;
 JsonObject fadeInputObj = fadeInput.to<JsonObject>();
-ThingAction fade("fade", "Fade", "Fade the lamp to a given level",
-                 "FadeAction", &fadeInputObj, action_generator);
-ThingEvent overheated("overheated",
-                      "The lamp has exceeded its safe operating temperature",
-                      NUMBER, "OverheatedEvent");
+ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
+ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
+//--- create AHT10 temp,Humidity sensors
+const char *sensorTypes[] = {"Sensor", "Sensor", nullptr};
+ThingDevice AHT10TempuratureDevice("AHT10Tempurature", "AHT10 Temperature", sensorTypes);
+ThingProperty AHT10TemperatureProperty("Temperature", "Temp measured by AHT10", NUMBER, "Centigrades");
+
+ThingDevice AHT10HumidityDevice("AHT10Humidity","AHT10 Relative Humidity",sensorTypes);
+ThingProperty AHT10HumidityProperty("AHT10Humidity","Humidity (RH) %",NUMBER,"%");
 
 // think property for device2
 
@@ -78,6 +85,10 @@ String lastColor = "#ffffff";
 const unsigned char redPin = 12;
 const unsigned char greenPin = 13;
 const unsigned char bluePin = 14;
+//---------------GPIO33 pulled low and connected to button to pull high to 3.3v
+#define BUTTON_WAKEUP_BITMASK 0x200000000 // 2^33 in hex / GPIO33
+//------------------------------------------------------------------
+
 //------------Adafruit Lib -----------------------------------------
 // the AHT must be connected to Bords SDA->GPIO21 and SCL ->GPIO22
 //  to detect the sensor board
@@ -89,18 +100,25 @@ WiFiClient client;
 MySQL_Connection sqlConn(&client);
 MySQL_Cursor *cursor;
 
+const int baseid = 0;
+std::map<int, string> deviceMap;
 void setup(void)
 {
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, HIGH);
-  Serial.begin(115200);
-  printf("Connecting to %s \n", ssid);
-  //------------------Initialize MAX7219-------------
-  printf("Initializing MAX7219..\n");
-  lc.shutdown(0, false);
-  lc.setIntensity(0, 100);
-  lc.clearDisplay(0);
-  lc.printF(0, (char *)"%0.2f");
+  // setup pins init MAX7219
+  {
+    pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, HIGH);
+    Serial.begin(115200);
+    printf("Connecting to %s \n", ssid);
+    //--- RTC wakeup on gpio 33 (wired to button)
+    esp_sleep_enable_ext1_wakeup(BUTTON_WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+    //------------------Initialize MAX7219-------------
+    printf("Initializing MAX7219..\n");
+    lc.shutdown(0, false);
+    lc.setIntensity(0, 100);
+    lc.clearDisplay(0);
+    lc.printF(0, (char *)"%0.2f");
+  }
   //-----------Detect AHT ----------------------------
   if (!aht.begin())
   {
@@ -108,81 +126,112 @@ void setup(void)
   }
   else
     printf("AHT10 or AHT20 found \n");
-  //--------------------------------------------------
-  WiFi.mode(WIFI_STA);
-
-  WiFi.begin(ssid, password);
-  // Wait for connection
-  bool blink = true;
-  while (WiFi.status() != WL_CONNECTED)
+  //---------connect Wifi(STA); blink while connecting--------------
   {
-    printf(".");
-    digitalWrite(ledPin, blink ? LOW : HIGH); // active low led
-    digitalWrite(ledPin, blink);
-    blink = !blink;
-    delay(80);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    // Wait for connection
+    bool blink = true;
+    while (WiFi.status() != WL_CONNECTED)
+    {
+      printf(".");
+      digitalWrite(ledPin, blink ? LOW : HIGH); // active low led
+      digitalWrite(ledPin, blink);
+      blink = !blink;
+      delay(80);
+    }
+    printf("\nConnected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
   }
-  printf("Now connection to MYSql \n");
-  if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
-    printf("Connected to SQL On ->%s \n", (char *)sqlIP.toString().c_str());
-  else
+  // connect MySQL on given SQLIP (in password.h)
   {
-    printf("Oh.. could not connect to SQL %s \n ", (char *)sqlIP.toString().c_str());
-  };
+    if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
+    {
+      printf("Connected to SQL On ->%s \n", (char *)sqlIP.toString().c_str());
+      // exit test/wakeup (press button(on gpio33) to wakeup)
+      digitalWrite(ledPin, LOW); // turn off active low led
+    }
+    else
+    {
+      printf("Oh.. could not connect to SQL %s \n ", (char *)sqlIP.toString().c_str());
+      printf("Placing this station to Deep Sleep!. Press the Button(GPIO33) to wakeup\n");
+      esp_deep_sleep_start();
+    };
+    // now get the registered device list;
 
-  digitalWrite(ledPin, HIGH); // turn off active low led
-  printf("\nConnected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
-  // THINGS BEGIN HERE
-  adapter = new WebThingAdapter("led-lamp", WiFi.localIP()); // instantiate the adapter
+    // digitalWrite(ledPin, HIGH); // turn off active low led
+  }
+  // Init Mozilla thing and begin the adapter
+  {
+    adapter = new WebThingAdapter("led-lamp", WiFi.localIP()); // instantiate the adapter
 
-  lamp.description = "A web conneced lamp";
-  lamp.title = "On/Off";
-  lamp.addProperty(&lampOn);
-  //---
-  lampLevel.title = "Brightness";
-  lampLevel.minimum = 0;
-  lampLevel.maximum = 100;
-  lampLevel.unit = "%";
-  lamp.addProperty(&lampLevel);
+    // set lamp Properties (a ThingDevice Properties) by device.addProperty(&Properties)
+    {
+      lamp.description = "A web conneced lamp";
+      lamp.title = "On/Off";
+      lamp.addProperty(&lampOn);
 
-  fadeInputObj["type"] = "object";
-  JsonObject fadeInputProperties = fadeInputObj.createNestedObject("properties");
+      lampLevel.title = "Brightness";
+      lampLevel.minimum = 0;
+      lampLevel.maximum = 100;
+      lampLevel.unit = "%";
+      lamp.addProperty(&lampLevel);
+    }
+    // create fade Input object and json
+    {
+      fadeInputObj["type"] = "object";
+      JsonObject fadeInputProperties = fadeInputObj.createNestedObject("properties");
 
-  JsonObject brightnessInput = fadeInputProperties.createNestedObject("brightness");
-  brightnessInput["type"] = "integer";
-  brightnessInput["minimum"] = 0;
-  brightnessInput["maximum"] = 100;
-  brightnessInput["unit"] = "percent";
+      JsonObject brightnessInput = fadeInputProperties.createNestedObject("brightness");
+      brightnessInput["type"] = "integer";
+      brightnessInput["minimum"] = 0;
+      brightnessInput["maximum"] = 100;
+      brightnessInput["unit"] = "percent";
 
-  JsonObject durationInput = fadeInputProperties.createNestedObject("duration");
-  durationInput["type"] = "integer";
-  durationInput["minimum"] = 1;
-  durationInput["unit"] = "milliseconds";
+      JsonObject durationInput = fadeInputProperties.createNestedObject("duration");
+      durationInput["type"] = "integer";
+      durationInput["minimum"] = 1;
+      durationInput["unit"] = "milliseconds";
+    }
+    // add device(lamp) actions and events and add the Device to adapter then begin the adapter
+    lamp.addAction(&fade);
+    overheated.unit = "degree C";
+    lamp.addEvent(&overheated);
+    adapter->addDevice(&lamp);
+  
+    AHT10TempuratureDevice.addProperty(&AHT10TemperatureProperty);
+    AHT10TempuratureDevice.title="AHT10 Tempurature";
+    adapter->addDevice(&AHT10TempuratureDevice);
 
-  lamp.addAction(&fade);
-
-  overheated.unit = "degree C";
-  lamp.addEvent(&overheated);
-
-  adapter->addDevice(&lamp);
-  adapter->begin();
+    AHT10HumidityDevice.addProperty(&AHT10HumidityProperty);
+    AHT10HumidityDevice.title="AHT10 Humidity";
+    adapter->addDevice(&AHT10HumidityDevice);
+    adapter->begin();
+  }
 }
-sensors_event_t hum, temp;
-static int i=0;
-void recordEnv()
-{
-  aht.getEvent(&hum, &temp);
-  //sprintf()
-      printf("%05d Humidity=%.2lf : Tempurature=%.2lf\n",++i, hum.relative_humidity, temp.temperature);
-}
+sensors_event_t humidity, temperature;
+static int i = 0;
 
+
+
+ThingPropertyValue pValue;
+void readAHT10(){
+  aht.getEvent(&humidity,&temperature);
+  pValue.number=humidity.relative_humidity;
+  AHT10HumidityProperty.setValue(pValue);
+  pValue.number=temperature.temperature;
+  AHT10TemperatureProperty.setValue(pValue);
+   printf("%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
+
+  
+}
 void loop(void)
 {
 
   digitalWrite(23, HIGH);
 
+ 
+  readAHT10(); 
   adapter->update();
-  recordEnv();
   delay(pushInterval);
 }
 void do_fade(const JsonVariant &input)
@@ -202,16 +251,18 @@ void do_fade(const JsonVariant &input)
   lc.clearDisplay(0);
   lc.printF((float)brightness, (char *)"%.2f");
   ThingDataValue val;
-  val.number = 102;
+  
 
   ThingEventObject *ev = new ThingEventObject("overheated", NUMBER, val);
+  printf(" Queu event(overheated) %2.2f\n",val.number);
   lamp.queueEventObject(ev);
+  
 }
 ThingActionObject *action_generator(DynamicJsonDocument *input)
 {
   String output;
   serializeJson(*input, output);
-  printf("Going to print \n");
+
   printf("printing ->input %s\n", output.c_str());
   return new ThingActionObject("fade", input, do_fade, nullptr);
 }
