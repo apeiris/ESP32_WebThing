@@ -16,6 +16,7 @@
  * https://github.com/WebThingsIO/webthing-arduino/blob/master/examples/LEDLamp/LEDLamp.ino
  */
 
+#define SOCKETS_DEBUG
 #define LARGE_JSON_BUFFERS 1
 
 #include <Arduino.h>
@@ -28,7 +29,7 @@
 #include <analogWrite.h>
 #include <MySQL_Connection.h>
 #include <MySQL_Cursor.h>
-
+#include <ArduinoOTA.h>
 #include <map>
 
 using namespace std;
@@ -36,7 +37,7 @@ using namespace std;
 IPAddress sqlIP(192, 168, 0, 10);
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
-#define  pushInterval  (60000/30)
+#define pushInterval (60000 / 30)
 #if defined(LED_BUILTIN)
 const int ledPin = LED_BUILTIN;
 #else
@@ -63,22 +64,34 @@ long mmap(long x, long in_min, long in_max, long out_min, long out_max)
 WebThingAdapter *adapter; // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
 const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
-ThingDevice lamp("ABC", "ABC", lampTypes);
-ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
-ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
+const char *sensorTypes[] = {"Sensor", "Sensor", nullptr};
+const char *asyncProperties[] = {"asyncProperty", nullptr};
+
 StaticJsonDocument<256> fadeInput;
 JsonObject fadeInputObj = fadeInput.to<JsonObject>();
 ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
 ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
-//--- create AHT10 temp,Humidity sensors
-const char *sensorTypes[] = {"Sensor", "Sensor", nullptr};
-ThingDevice AHT10TempuratureDevice("AHT10Tempurature", "AHT10 Temperature", sensorTypes);
-ThingProperty AHT10TemperatureProperty("Temperature", "Temp measured by AHT10", NUMBER, "Centigrades");
 
-ThingDevice AHT10HumidityDevice("AHT10Humidity","AHT10 Relative Humidity",sensorTypes);
-ThingProperty AHT10HumidityProperty("AHT10Humidity","Humidity (RH) %",NUMBER,"%");
+ThingDevice lamp("ABC", "ABC", lampTypes);
+ThingDevice AHT10Device("AHT10", "AHT10", sensorTypes);
+ThingDevice textDisplay("asyncProperty", "Async Property Test", asyncProperties);
 
-// think property for device2
+ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
+ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
+ThingProperty AHT10TemperatureProperty("Temperature", "Temperature in C", NUMBER, "Centigrades");
+ThingProperty AHT10HumidityProperty("Humidity", "Humidity (RH) %", NUMBER, "%");
+
+// Forward declaration
+void textDisplayTextChanged(ThingPropertyValue newVal);
+ThingProperty textDisplayText("text", "", STRING, nullptr, textDisplayTextChanged);
+//ThingProperty textDisplayToggle("toggle","",STRING,nullptr,textDisplayToggled);
+//ThingProperty textDisplayNumber("number","",STRING,nullptr,textDisplayNumbenewrChanged);
+
+void textDisplayTextChanged(ThingPropertyValue newVal)
+{
+  String x = *newVal.string;
+  printf("text=>%s\n", x.c_str());
+}
 
 String lastColor = "#ffffff";
 
@@ -102,6 +115,93 @@ MySQL_Cursor *cursor;
 
 const int baseid = 0;
 std::map<int, string> deviceMap;
+String message = "thismsg";
+void WiFiEvent(WiFiEvent_t event)
+{
+  Serial.printf("[WiFi-event] event: %d\n", event);
+
+  switch (event)
+  {
+  case SYSTEM_EVENT_WIFI_READY:
+    Serial.println("WiFi interface ready");
+    break;
+  case SYSTEM_EVENT_SCAN_DONE:
+    Serial.println("Completed scan for access points");
+    break;
+  case SYSTEM_EVENT_STA_START:
+    Serial.println("WiFi client started");
+    break;
+  case SYSTEM_EVENT_STA_STOP:
+    Serial.println("WiFi clients stopped");
+    break;
+  case SYSTEM_EVENT_STA_CONNECTED:
+    Serial.println("Connected to access point");
+    break;
+  case SYSTEM_EVENT_STA_DISCONNECTED:
+    Serial.println("Disconnected from WiFi access point");
+    break;
+  case SYSTEM_EVENT_STA_AUTHMODE_CHANGE:
+    Serial.println("Authentication mode of access point has changed");
+    break;
+  case SYSTEM_EVENT_STA_GOT_IP:
+    Serial.print("Obtained IP address: ");
+    Serial.println(WiFi.localIP());
+    break;
+  case SYSTEM_EVENT_STA_LOST_IP:
+    Serial.println("Lost IP address and IP address is reset to 0");
+    break;
+  case SYSTEM_EVENT_STA_WPS_ER_SUCCESS:
+    Serial.println("WiFi Protected Setup (WPS): succeeded in enrollee mode");
+    break;
+  case SYSTEM_EVENT_STA_WPS_ER_FAILED:
+    Serial.println("WiFi Protected Setup (WPS): failed in enrollee mode");
+    break;
+  case SYSTEM_EVENT_STA_WPS_ER_TIMEOUT:
+    Serial.println("WiFi Protected Setup (WPS): timeout in enrollee mode");
+    break;
+  case SYSTEM_EVENT_STA_WPS_ER_PIN:
+    Serial.println("WiFi Protected Setup (WPS): pin code in enrollee mode");
+    break;
+  case SYSTEM_EVENT_AP_START:
+    Serial.println("WiFi access point started");
+    break;
+  case SYSTEM_EVENT_AP_STOP:
+    Serial.println("WiFi access point  stopped");
+    break;
+  case SYSTEM_EVENT_AP_STACONNECTED:
+    Serial.println("Client connected");
+    break;
+  case SYSTEM_EVENT_AP_STADISCONNECTED:
+    Serial.println("Client disconnected");
+    break;
+  case SYSTEM_EVENT_AP_STAIPASSIGNED:
+    Serial.println("Assigned IP address to client");
+    break;
+  case SYSTEM_EVENT_AP_PROBEREQRECVED:
+    Serial.println("Received probe request");
+    break;
+  case SYSTEM_EVENT_GOT_IP6:
+    Serial.println("IPv6 is preferred");
+    break;
+  case SYSTEM_EVENT_ETH_START:
+    Serial.println("Ethernet started");
+    break;
+  case SYSTEM_EVENT_ETH_STOP:
+    Serial.println("Ethernet stopped");
+    break;
+  case SYSTEM_EVENT_ETH_CONNECTED:
+    Serial.println("Ethernet connected");
+    break;
+  case SYSTEM_EVENT_ETH_DISCONNECTED:
+    Serial.println("Ethernet disconnected");
+    break;
+  case SYSTEM_EVENT_ETH_GOT_IP:
+    Serial.println("Obtained IP address");
+    break;
+  default:
+    break;
+  }
+}
 void setup(void)
 {
   // setup pins init MAX7219
@@ -115,7 +215,7 @@ void setup(void)
     //------------------Initialize MAX7219-------------
     printf("Initializing MAX7219..\n");
     lc.shutdown(0, false);
-    lc.setIntensity(0, 100);
+    lc.setIntensity(0, 10);
     lc.clearDisplay(0);
     lc.printF(0, (char *)"%0.2f");
   }
@@ -129,7 +229,15 @@ void setup(void)
   //---------connect Wifi(STA); blink while connecting--------------
   {
     WiFi.mode(WIFI_STA);
+    WiFi.onEvent(WiFiEvent);
+
+    WiFiEventId_t eventID = WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+      Serial.print("WiFi lost connection. Reason: ");
+      Serial.println(info.disconnected.reason);
+    },
+                                         WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
     WiFi.begin(ssid, password);
+
     // Wait for connection
     bool blink = true;
     while (WiFi.status() != WL_CONNECTED)
@@ -142,6 +250,8 @@ void setup(void)
     }
     printf("\nConnected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
   }
+
+
   // connect MySQL on given SQLIP (in password.h)
   {
     if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
@@ -168,7 +278,6 @@ void setup(void)
     {
       lamp.description = "A web conneced lamp";
       lamp.title = "On/Off";
-      lamp.addProperty(&lampOn);
 
       lampLevel.title = "Brightness";
       lampLevel.minimum = 0;
@@ -193,45 +302,56 @@ void setup(void)
       durationInput["unit"] = "milliseconds";
     }
     // add device(lamp) actions and events and add the Device to adapter then begin the adapter
+
     lamp.addAction(&fade);
     overheated.unit = "degree C";
     lamp.addEvent(&overheated);
-    adapter->addDevice(&lamp);
-  
-    AHT10TempuratureDevice.addProperty(&AHT10TemperatureProperty);
-    AHT10TempuratureDevice.title="AHT10 Tempurature";
-    adapter->addDevice(&AHT10TempuratureDevice);
 
-    AHT10HumidityDevice.addProperty(&AHT10HumidityProperty);
-    AHT10HumidityDevice.title="AHT10 Humidity";
-    adapter->addDevice(&AHT10HumidityDevice);
+    lamp.addProperty(&lampOn);
+    AHT10Device.addProperty(&AHT10TemperatureProperty);
+    AHT10Device.addProperty(&AHT10HumidityProperty);
+    ThingPropertyValue v;
+
+    v.string = &message;
+    textDisplayText.setValue(v);
+    textDisplay.addProperty(&textDisplayText);
+
+    adapter->addDevice(&lamp);
+    adapter->addDevice(&AHT10Device);
+    adapter->addDevice(&textDisplay);
     adapter->begin();
   }
 }
 sensors_event_t humidity, temperature;
 static int i = 0;
 
+ThingPropertyValue toPvalueNumber(double n)
+{
+  ThingPropertyValue pv;
+  pv.number = n;
+  return pv;
+}
+void readAHT10()
+{
+  aht.getEvent(&humidity, &temperature);
 
-
-ThingPropertyValue pValue;
-void readAHT10(){
-  aht.getEvent(&humidity,&temperature);
-  pValue.number=humidity.relative_humidity;
-  AHT10HumidityProperty.setValue(pValue);
-  pValue.number=temperature.temperature;
-  AHT10TemperatureProperty.setValue(pValue);
-   printf("%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
-
-  
+  AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
+  AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
+  printf("%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
 }
 void loop(void)
 {
 
   digitalWrite(23, HIGH);
 
- 
-  readAHT10(); 
-  adapter->update();
+  readAHT10();
+  adapter->update(); // pushit to the iot gateway
+  WiFiEventId_t eventID = WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    Serial.print("WiFi lost connection. Reason: ");
+    Serial.println(info.disconnected.reason);
+  },
+                                       WiFiEvent_t::SYSTEM_EVENT_STA_DISCONNECTED);
+  WiFi.removeEvent(eventID);
   delay(pushInterval);
 }
 void do_fade(const JsonVariant &input)
@@ -251,12 +371,10 @@ void do_fade(const JsonVariant &input)
   lc.clearDisplay(0);
   lc.printF((float)brightness, (char *)"%.2f");
   ThingDataValue val;
-  
 
   ThingEventObject *ev = new ThingEventObject("overheated", NUMBER, val);
-  printf(" Queu event(overheated) %2.2f\n",val.number);
+  printf(" Queu event(overheated) %2.2f\n", val.number);
   lamp.queueEventObject(ev);
-  
 }
 ThingActionObject *action_generator(DynamicJsonDocument *input)
 {
