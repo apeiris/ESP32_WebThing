@@ -37,7 +37,7 @@ using namespace std;
 IPAddress sqlIP(192, 168, 0, 10);
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
-#define pushInterval (60000 / 30)
+#define pushInterval (60000 / 1)
 #if defined(LED_BUILTIN)
 const int ledPin = LED_BUILTIN;
 #else
@@ -113,7 +113,10 @@ MySQL_Cursor *cursor;
 
 const int baseid = 0;
 std::map<int, string> deviceMap;
-
+void registerDevice(String deviceId, String propertyId)
+{
+    printf("Registering device = %s, property=%s\n", deviceId.c_str(), propertyId.c_str());
+}
 void setup(void)
 {
     // setup pins init MAX7219
@@ -175,12 +178,11 @@ void setup(void)
     }
     // Init Mozilla thing and begin the adapter
     {
-        adapter = new WebThingAdapter("led-lamp", WiFi.localIP()); // instantiate the adapter
-    
-  
-       //  ThingDevice lamp("ABC", "ABC", lampTypes);
-       // ThingDevice x[1]={ lamp};
-          // set lamp Properties (a ThingDevice Properties) by device.addProperty(&Properties)
+
+        String x = WiFi.macAddress();
+        x.replace(":", "");
+        adapter = new WebThingAdapter(x, WiFi.localIP());
+        registerDevice(x,"base");
         {
             lamp.description = "A web conneced lamp";
             lamp.title = "On/Off";
@@ -226,6 +228,19 @@ void setup(void)
         adapter->addDevice(&textDisplay);
         adapter->begin();
     }
+    printf("Adapter initialized \n");
+
+    ThingDevice *d = adapter->getFirstDevice();
+    while (d)
+    {
+        ThingProperty *p = d->firstProperty;
+        while (p)
+        {
+            registerDevice(d->id, p->id);
+            p = (ThingProperty *)p->next;
+        }
+        d = d->next;
+    }
 }
 sensors_event_t humidity, temperature;
 static int i = 0;
@@ -241,6 +256,7 @@ void readAHT10()
     aht.getEvent(&humidity, &temperature);
 
     AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
+    AHT10TemperatureProperty.readOnly = true;
     AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
     printf("%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
 }
@@ -252,8 +268,6 @@ void loop(void)
     readAHT10();
     adapter->update(); // pushit to the iot gateway
 
-                               
- 
     delay(pushInterval);
 }
 void do_fade(const JsonVariant &input)
