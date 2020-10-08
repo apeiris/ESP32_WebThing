@@ -15,25 +15,28 @@
  * this code is based on
  * https://github.com/WebThingsIO/webthing-arduino/blob/master/examples/LEDLamp/LEDLamp.ino
  */
-
 #define LARGE_JSON_BUFFERS 1
 
 #include <Arduino.h>
-#include <Thing.h>
-#include <WebThingAdapter.h>
+#include "Thing.h"
+#include "WebThingAdapter.h"
 #include <SPI.h>
 #include "LedControl.h"
-
 #include <Adafruit_AHTX0.h>
 #include <analogWrite.h>
 #include <MySQL_Connection.h>
 #include <MySQL_Cursor.h>
 #include <ArduinoOTA.h>
 #include <map>
-
-using namespace std;
 #include "password.h"
 #include "myUtils.h"
+#include "esp_system.h"
+#include "esp_log.h"
+
+using namespace std;
+static const char * TAG = "main.cpp";
+
+
 IPAddress sqlIP(192, 168, 0, 10);
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
@@ -88,7 +91,7 @@ String lastMessage = message;
 void textDisplayTextChanged(ThingPropertyValue newVal)
 {
     String x = *newVal.string;
-    printf("text=>%s\n", x.c_str());
+    ESP_LOGI(TAG, "text=>%s\n", x.c_str());
 }
 
 String lastColor = "#ffffff";
@@ -109,26 +112,52 @@ LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
 WiFiClient client;
 MySQL_Connection sqlConn(&client);
-MySQL_Cursor *cursor;
+
 
 const int baseid = 0;
+String baseKey = ""; // this is the Wifi Mac strip of :
 std::map<int, string> deviceMap;
-void registerDevice(String deviceId, String propertyId)
+char sqlStmt[] = "CALL IOT.insertDevice('%s','%s','%s');";
+char sQuery[300];
+
+void registerDevice(ThingDevice *d, ThingProperty *p)
 {
-    printf("Registering device = %s, property=%s\n", deviceId.c_str(), propertyId.c_str());
+    // printf("Registering device = %s, property=%s description=%s\n", d->id.c_str(), p->id.c_str(),p->description.c_str());
+    sprintf(sQuery, sqlStmt, d->id.c_str(), p->id.c_str(), p->description.c_str());
+
+    if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
+    {
+       // ESP_LOGI(TAG, "Connected in registerDevice for query \n\t delaying for 500\n->%s \n", sQuery);
+        delay(200);
+        MySQL_Cursor *curm=new MySQL_Cursor(&sqlConn);
+        curm->execute(sQuery);
+        char * x=  curm->getLastScalar();
+        ESP_LOGI(TAG,"Query=%s\n\t rv=%s\n",sQuery,x);
+        curm->close();
+        delete curm;
+        
+        
+       
+    }
+    else
+    { ESP_LOGE(TAG,"Sql connect failed\n" );}
+    
 }
 void setup(void)
 {
+    uint8_t macAddr[6] = {0};
+    esp_err_t ret = ESP_OK;
     // setup pins init MAX7219
     {
+
         pinMode(ledPin, OUTPUT);
         digitalWrite(ledPin, HIGH);
         Serial.begin(115200);
-        printf("Connecting to %s \n", ssid);
+        ESP_LOGI(TAG, "Connecting to %s \n", ssid);
         //--- RTC wakeup on gpio 33 (wired to button)
         esp_sleep_enable_ext1_wakeup(BUTTON_WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
         //------------------Initialize MAX7219-------------
-        printf("Initializing MAX7219..\n");
+        ESP_LOGI(TAG, "Initializing MAX7219..\n");
         lc.shutdown(0, false);
         lc.setIntensity(0, 10);
         lc.clearDisplay(0);
@@ -137,10 +166,10 @@ void setup(void)
     //-----------Detect AHT ----------------------------
     if (!aht.begin())
     {
-        printf("Could not fine AHT ! \n");
+        ESP_LOGI(TAG, "Could not fine AHT ! \n");
     }
     else
-        printf("AHT10 or AHT20 found \n");
+        ESP_LOGI(TAG, "AHT10 or AHT20 found \n");
     //---------connect Wifi(STA); blink while connecting--------------
     {
         WiFi.mode(WIFI_STA);
@@ -156,20 +185,24 @@ void setup(void)
             blink = !blink;
             delay(80);
         }
-        printf("\nConnected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
+        baseKey = WiFi.macAddress();
+        baseKey.replace(":", "");
+        ESP_LOGI(TAG, "Connected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), baseKey.c_str());
+        ret = esp_efuse_mac_get_default(macAddr);
+  
     }
     // connect MySQL on given SQLIP (in password.h)
     {
         if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
         {
-            printf("Connected to SQL On ->%s \n", (char *)sqlIP.toString().c_str());
+            ESP_LOGI(TAG, "Connected to SQL On ->%s \n", (char *)sqlIP.toString().c_str());
             // exit test/wakeup (press button(on gpio33) to wakeup)
             digitalWrite(ledPin, LOW); // turn off active low led
         }
         else
         {
-            printf("Oh.. could not connect to SQL %s \n ", (char *)sqlIP.toString().c_str());
-            printf("Placing this station to Deep Sleep!. Press the Button(GPIO33) to wakeup\n");
+            ESP_LOGI(TAG, "Oh.. could not connect to SQL %s \n ", (char *)sqlIP.toString().c_str());
+            ESP_LOGI(TAG, "Placing this station to Deep Sleep!. Press the Button(GPIO33) to wakeup\n");
             esp_deep_sleep_start();
         };
         // now get the registered device list;
@@ -182,7 +215,7 @@ void setup(void)
         String x = WiFi.macAddress();
         x.replace(":", "");
         adapter = new WebThingAdapter(x, WiFi.localIP());
-        registerDevice(x,"base");
+        //   registerDevice(x,"base");
         {
             lamp.description = "A web conneced lamp";
             lamp.title = "On/Off";
@@ -228,7 +261,7 @@ void setup(void)
         adapter->addDevice(&textDisplay);
         adapter->begin();
     }
-    printf("Adapter initialized \n");
+    ESP_LOGE(TAG, "Adapter initialized \n");
 
     ThingDevice *d = adapter->getFirstDevice();
     while (d)
@@ -236,7 +269,8 @@ void setup(void)
         ThingProperty *p = d->firstProperty;
         while (p)
         {
-            registerDevice(d->id, p->id);
+            // registerDevice(d->id, p->id);
+            registerDevice(d, p);
             p = (ThingProperty *)p->next;
         }
         d = d->next;
@@ -258,7 +292,7 @@ void readAHT10()
     AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
     AHT10TemperatureProperty.readOnly = true;
     AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
-    printf("%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
+    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
 }
 void loop(void)
 {
@@ -282,14 +316,14 @@ void do_fade(const JsonVariant &input)
     lampLevel.setValue(value);
 
     int level = (int)Arduino_h::map(brightness, 0, 100, 255, 0);
-    printf("value =%i , level(mapped)=%d \n", (int)value.integer, level);
+    ESP_LOGI(TAG, "value =%i , level(mapped)=%d \n", (int)value.integer, level);
     analogWrite(lampPin, level, 255);
     lc.clearDisplay(0);
     lc.printF((float)brightness, (char *)"%.2f");
     ThingDataValue val;
 
     ThingEventObject *ev = new ThingEventObject("overheated", NUMBER, val);
-    printf(" Queu event(overheated) %2.2f\n", val.number);
+    ESP_LOGI(TAG, " Queu event(overheated) %2.2f\n", val.number);
     lamp.queueEventObject(ev);
 }
 ThingActionObject *action_generator(DynamicJsonDocument *input)
@@ -297,6 +331,6 @@ ThingActionObject *action_generator(DynamicJsonDocument *input)
     String output;
     serializeJson(*input, output);
 
-    printf("printing ->input %s\n", output.c_str());
+    ESP_LOGI(TAG, "printing ->input %s\n", output.c_str());
     return new ThingActionObject("fade", input, do_fade, nullptr);
 }
