@@ -34,13 +34,12 @@
 #include "esp_log.h"
 
 using namespace std;
-static const char * TAG = "main.cpp";
+static const char *TAG = "main.cpp";
 
-
-IPAddress sqlIP(192, 168, 0, 10);
+IPAddress mySqlIP(192, 168, 0, 10);
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
-#define pushInterval (60000 / 1)
+#define pushInterval (60000 / 100)
 #if defined(LED_BUILTIN)
 const int ledPin = LED_BUILTIN;
 #else
@@ -72,6 +71,7 @@ JsonObject fadeInputObj = fadeInput.to<JsonObject>();
 ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
 ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
 
+ThingDevice wifiBase("wifi","base","base address");
 ThingDevice lamp("ABC", "ABC", lampTypes);
 ThingDevice AHT10Device("AHT10", "AHT10", sensorTypes);
 ThingDevice textDisplay("asyncProperty", "Async Property Test", asyncProperties);
@@ -111,37 +111,36 @@ Adafruit_AHTX0 aht;
 LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
 WiFiClient client;
-MySQL_Connection sqlConn(&client);
-
+MySQL_Connection mySqlConn(&client);
 
 const int baseid = 0;
 String baseKey = ""; // this is the Wifi Mac strip of :
 std::map<int, string> deviceMap;
-char sqlStmt[] = "CALL IOT.insertDevice('%s','%s','%s');";
+//char sqlStmt[] = "CALL IOT.insertDevice('%s','%s','%s');";
 char sQuery[300];
 
+String sqlStmt = "Call Iot.insertDevice('%s','%s','%s');";
 void registerDevice(ThingDevice *d, ThingProperty *p)
 {
-    // printf("Registering device = %s, property=%s description=%s\n", d->id.c_str(), p->id.c_str(),p->description.c_str());
-    sprintf(sQuery, sqlStmt, d->id.c_str(), p->id.c_str(), p->description.c_str());
+    sprintf(sQuery, sqlStmt.c_str(), d->id.c_str(), p->id.c_str(), p->description.c_str());
+    ESP_LOGI(TAG, "ready to sql = %s\n \t %s\n", sqlStmt, sQuery);
 
-    if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
+    if (mySqlConn.connect(mySqlIP, sqlPort, sqlUser, sqlPassword))
     {
-       // ESP_LOGI(TAG, "Connected in registerDevice for query \n\t delaying for 500\n->%s \n", sQuery);
+        // ESP_LOGI(TAG, "Connected in registerDevice for query \n\t delaying for 500\n->%s \n", sQuery);
         delay(200);
-        MySQL_Cursor *curm=new MySQL_Cursor(&sqlConn);
+        MySQL_Cursor *curm = new MySQL_Cursor(&mySqlConn);
         curm->execute(sQuery);
-        char * x=  curm->getLastScalar();
-        ESP_LOGI(TAG,"Query=%s\n\t rv=%s\n",sQuery,x);
+        char *x = curm->getLastScalar();
+        p->propetyDbId = atoi(x);
+        ESP_LOGI(TAG, "Query=%s\n\t rv=%s\n\tpropertyDbId=%i \n", sQuery, x, p->propetyDbId);
         curm->close();
         delete curm;
-        
-        
-       
+        mySqlConn.close();
     }
     else
-    { ESP_LOGE(TAG,"Sql connect failed\n" );}
-    
+
+        ESP_LOGE(TAG, "Sql connect failed\n");
 }
 void setup(void)
 {
@@ -166,7 +165,7 @@ void setup(void)
     //-----------Detect AHT ----------------------------
     if (!aht.begin())
     {
-        ESP_LOGI(TAG, "Could not fine AHT ! \n");
+        ESP_LOGI(TAG, "Could not find AHT ! \n");
     }
     else
         ESP_LOGI(TAG, "AHT10 or AHT20 found \n");
@@ -174,34 +173,30 @@ void setup(void)
     {
         WiFi.mode(WIFI_STA);
         WiFi.begin(ssid, password);
-
-        // Wait for connection
-        bool blink = true;
+        bool blink=false;
         while (WiFi.status() != WL_CONNECTED)
         {
             printf(".");
             digitalWrite(ledPin, blink ? LOW : HIGH); // active low led
             digitalWrite(ledPin, blink);
-            blink = !blink;
             delay(80);
         }
         baseKey = WiFi.macAddress();
         baseKey.replace(":", "");
         ESP_LOGI(TAG, "Connected to-> %s : localIP=%s: mac=%s \n", ssid, (char *)WiFi.localIP().toString().c_str(), baseKey.c_str());
         ret = esp_efuse_mac_get_default(macAddr);
-  
     }
     // connect MySQL on given SQLIP (in password.h)
     {
-        if (sqlConn.connect(sqlIP, sqlPort, sqlUser, sqlPassword))
+        if (mySqlConn.connect(mySqlIP, sqlPort, sqlUser, sqlPassword))
         {
-            ESP_LOGI(TAG, "Connected to SQL On ->%s \n", (char *)sqlIP.toString().c_str());
+            ESP_LOGI(TAG, "Connected to SQL On ->%s \n", (char *)mySqlIP.toString().c_str());
             // exit test/wakeup (press button(on gpio33) to wakeup)
             digitalWrite(ledPin, LOW); // turn off active low led
         }
         else
         {
-            ESP_LOGI(TAG, "Oh.. could not connect to SQL %s \n ", (char *)sqlIP.toString().c_str());
+            ESP_LOGI(TAG, "Oh.. could not connect to SQL %s \n ", (char *)mySqlIP.toString().c_str());
             ESP_LOGI(TAG, "Placing this station to Deep Sleep!. Press the Button(GPIO33) to wakeup\n");
             esp_deep_sleep_start();
         };
@@ -215,7 +210,7 @@ void setup(void)
         String x = WiFi.macAddress();
         x.replace(":", "");
         adapter = new WebThingAdapter(x, WiFi.localIP());
-        //   registerDevice(x,"base");
+        adapter->addDevice(&wifiBase);
         {
             lamp.description = "A web conneced lamp";
             lamp.title = "On/Off";
@@ -249,11 +244,11 @@ void setup(void)
         lamp.addEvent(&overheated);
 
         lamp.addProperty(&lampOn);
+        AHT10TemperatureProperty.readOnly = true;
         AHT10Device.addProperty(&AHT10TemperatureProperty);
+        AHT10HumidityProperty.readOnly = true;
         AHT10Device.addProperty(&AHT10HumidityProperty);
-        // ThingPropertyValue v;
 
-        //  textDisplayText.setValue(v);
         textDisplay.addProperty(&textDisplayText);
 
         adapter->addDevice(&lamp);
@@ -269,12 +264,13 @@ void setup(void)
         ThingProperty *p = d->firstProperty;
         while (p)
         {
-            // registerDevice(d->id, p->id);
             registerDevice(d, p);
             p = (ThingProperty *)p->next;
         }
         d = d->next;
     }
+    // prepare sql for events inserts
+    //sqlStmt ="CALL IOT.insertEvent('%s','%s');";
 }
 sensors_event_t humidity, temperature;
 static int i = 0;
@@ -285,14 +281,26 @@ ThingPropertyValue toPvalueNumber(double n)
     pv.number = n;
     return pv;
 }
+
+void registerValueEvent(int dbid, String val)
+{ //make sure teh sqlStatment is set properly to "Call IOT.InsertEvent('%i','%s');";
+
+    sprintf(sQuery, sqlStmt.c_str(), dbid, val);
+
+    ESP_LOGD(TAG, "Sql STatement = %s \n\t sQyert=%s\n", sqlStmt, sQuery);
+}
 void readAHT10()
 {
+    char *fs = "hisssa";
     aht.getEvent(&humidity, &temperature);
+    //   gcvt(humidity.relative_humidity,5,fs);
 
+    // registerValueEvent(AHT10HumidityProperty.propetyDbId,std::to_string(humidity.relative_humidity))
+    //   registerValueEvent(AHT10HumidityProperty.propetyDbId,String(fs));
     AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
-    AHT10TemperatureProperty.readOnly = true;
     AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
-    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% : Tempurature=%.2lf\n", ++i, humidity.relative_humidity, temperature.temperature);
+
+    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% dbid=%i : Tempurature=%.2lf dbid=%i \n", ++i, humidity.relative_humidity, AHT10HumidityProperty.propetyDbId, temperature.temperature, AHT10TemperatureProperty.propetyDbId);
 }
 void loop(void)
 {
