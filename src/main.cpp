@@ -23,6 +23,7 @@
 #include <MySQL_Connection.h>
 #include <MySQL_Cursor.h>
 #include <SPI.h>
+#include <StreamUtils.h>
 #include <analogWrite.h>
 
 #include <map>
@@ -69,16 +70,15 @@ const char *baseTypes[] = {"WiFiBase", "MAC Address", nullptr};
 const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
 const char *sensorTypes[] = {"Sensor", "Sensor", nullptr};
 const char *asyncProperties[] = {"asyncProperty", nullptr};
-
 StaticJsonDocument<256> fadeInput;
 JsonObject fadeInputObj = fadeInput.to<JsonObject>();
 ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
 ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
 ThingDevice wifiBase("wifi", "MAC Address", baseTypes);
 
-ThingDevice lamp("ABC", "ABC", lampTypes);
+ThingDevice lamp("LED", "ABC", lampTypes);
 ThingDevice AHT10Device("AHT10", "AHT10", sensorTypes);
-ThingDevice textDisplay("asyncProperty", "Async Property Test", asyncProperties);
+ThingDevice textDisplay("Text", "text Async Property Test", asyncProperties);
 
 ThingProperty base("wifi", "MAC of base WiFi", STRING, "MAC adress");
 ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
@@ -219,58 +219,84 @@ void initAdapterAndAddDevices() {
     adapter->addDevice(&AHT10Device);
     adapter->addDevice(&textDisplay);
     adapter->begin();
-    ESP_LOGI(TAG, "Webthing Adapter initialized with 5 devices\n");
+    ESP_LOGI(TAG, "Webthing Adapter initialized with %i devices\n");
 }
 //------------------------------------------------------------------
 void registerDevice(ThingDevice *d, ThingProperty *p) {
-    sprintf(sQuery, sqlStmt.c_str(), d->id.c_str(), p->id.c_str(),
-            p->description.c_str());
-    ESP_LOGI(TAG, "ready to sql = %s\n \t %s\n", sqlStmt.c_str(), sQuery);
-
-    if (mySqlConn.connect(mySqlIP, sqlPort, sqlUser, sqlPassword)) {
-        // ESP_LOGI(TAG, "Connected in registerDevice for query \n\t delaying
-        // for 500\n->%s \n", sQuery);
-        delay(200);
-        MySQL_Cursor *curm = new MySQL_Cursor(&mySqlConn);
-        curm->execute(sQuery);
-        char *x = curm->getLastScalar();
-        p->propetyDbId = atoi(x);
-        ESP_LOGI(TAG, "Query=%s\n\t rv=%s\n\tpropertyDbId=%i \n", sQuery, x,
-                 p->propetyDbId);
-        curm->close();
-        delete curm;
-        mySqlConn.close();
-    } else
-
-        ESP_LOGE(TAG, "Sql connect failed\n");
 }
+//------------------------------------------------------------------
+void serielizeProperty(ThingProperty t) {
+    DynamicJsonDocument doc(500);
+    String out;
+    doc[t.title] = t.title;
+    doc[t.description] = t.description;
+    ThingDataValue x = t.getValue();
+    doc["value"] = x.number;
+    serializeJson(doc, out);
+    ESP_LOGI(TAG, "SerializeProperty=%s  \n\t len=%i\n", out.c_str(), out.length());
+}
+void serializeDevice(ThingDevice d) {
+    return;
+    DynamicJsonDocument doc(500);
+    String out;
+    doc["id"] = d.id;
+
+    // doc["id"] ="ss";
+    // doc["d.id"] = d.id;
+    serializeJson(doc, out);
+    ESP_LOGI(TAG, "serializeDevice:", out.c_str(), out.length());
+}
+#define RED = \033[0;31m
 //----registerDevices() in the SQL Serve from the adapter-----------
 void registerDevices() {
+    DynamicJsonDocument jd(1024);
+    JsonObject jb = jd.createNestedObject("base");
     ThingDevice *d = adapter->getFirstDevice();
+    int eCode = 0;
+    String output, eMsg = "";
+    eCode = (d->title != "MAC Address") ? 1 : 0;
+    eMsg = (eCode != 0) ? "ERROR: MAC Addres is not defined!" : NULL;
+    jb["ErrorMsg"] = eMsg;
+    jb["errorCode"] = eCode;
+    jb["id"] = d->id;
+    jb["title"] = d->title;
+    JsonObject dev = jb.createNestedObject("devices");
+    JsonObject prop ;
     while (d) {
+        if (d != adapter->getFirstDevice()) {  // ignore the base station address
+           
+            prop = dev.createNestedObject(d->id);
+        }
         ThingProperty *p = d->firstProperty;
         while (p) {
-            registerDevice(d, p);
+            prop.getOrAddMember(p->id);
+            
             p = (ThingProperty *)p->next;
         }
         d = d->next;
     }
+    serializeJsonPretty(jd, output);
+    printf("\n%s \n\tl=%i\n", output.c_str(), output.length());
+
+    serializeJsonPretty(jd,Serial);
+  
+ 
+
+
+
+    //ESP_LOGI(TAG, "\nout=\n%s\n\t\t len=%i\n", output.c_str(), output.length());
 }
 //------------------------------------------------------------------
 void setup(void) {
-    uint8_t macAddr[6] = {0};
-    esp_err_t ret = ESP_OK;
-    initMAX7219();  // (1) --- init MAX7219
-    initAHT();      // (2)----- init AHT------------------------------
-    initWifi();     // (3)------init WiFi-----------------------------
-    ESP_LOGI(TAG, "Connected to-> %s : localIP=%s \n", ssid, (char *)WiFi.localIP().toString().c_str());
-    initSQL();                   // (4) --- init SQL-------------------------------
-    initAdapterAndAddDevices();  // (5) -- intiAdapterAndAddDevices()--------------
-    registerDevices();           // (6) -- registerDevices() in the adapter--------
+    esp_log_level_set(TAG, ESP_LOG_ERROR);
+    initMAX7219();               // (1) --- init MAX7219
+    initAHT();                   // (2)----- init AHT------------------------------
+    initWifi();                  // (3)------init WiFi-----------------------------
+    initSQL();                   // (4) --- init SQL-----------------------------------
+    initAdapterAndAddDevices();  // (5) -- intiAdapterAndAddDevices()------------------
+    registerDevices();           // (6) -- registerDevices() cantained in the adapter--
 }
-
 static int i = 0;
-
 ThingPropertyValue toPvalueNumber(double n) {
     ThingPropertyValue pv;
     pv.number = n;
@@ -280,23 +306,24 @@ void registerValueEvent(int dbid, String val) {  // make sure teh sqlStatment is
     sprintf(sQuery, sqlStmt.c_str(), dbid, val);
     ESP_LOGD(TAG, "Sql STatement = %s \n\t sQyert=%s\n", sqlStmt, sQuery);
 }
+ReadLoggingStream rs(Serial, Serial);
 void readAHT10() {
     sensors_event_t humidity, temperature;
     aht.getEvent(&humidity, &temperature);  //   gcvt(humidity.relative_humidity,5,fs);
     AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
     AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
+
     ESP_LOGI(TAG, "%05d Humidity=%.2lf%% dbid=%i : Tempurature=%.2lf dbid=%i \n", ++i, humidity.relative_humidity, AHT10HumidityProperty.propetyDbId, temperature.temperature, AHT10TemperatureProperty.propetyDbId);
 }
 void loop(void) {
     digitalWrite(23, HIGH);
-
     readAHT10();
     adapter->update();  // pushit to the iot gateway
-
     delay(pushInterval);
 }
 void do_fade(const JsonVariant &input) {
     JsonObject inputObj = input.as<JsonObject>();
+    ESP_LOGD(TAG, "inputObj=%s\n", inputObj);
     long long int duration = inputObj["duration"];
     long long int brightness = inputObj["brightness"];
 
@@ -306,7 +333,7 @@ void do_fade(const JsonVariant &input) {
     lampLevel.setValue(value);
 
     int level = (int)Arduino_h::map(brightness, 0, 100, 255, 0);
-    ESP_LOGI(TAG, "value =%i , level(mapped)=%d \n", (int)value.integer, level);
+    ESP_LOGD(TAG, "value =%i , level(mapped)=%d \n", (int)value.integer, level);
     analogWrite(lampPin, level, 255);
     lc.clearDisplay(0);
     lc.printF((float)brightness, (char *)"%.2f");
@@ -319,7 +346,6 @@ void do_fade(const JsonVariant &input) {
 ThingActionObject *action_generator(DynamicJsonDocument *input) {
     String output;
     serializeJson(*input, output);
-
-    ESP_LOGI(TAG, "printing ->input %s\n", output.c_str());
+    ESP_LOGI(TAG, "Serialising  DynamicJsonDocument:\n\toutput:%s\n", output.c_str());
     return new ThingActionObject("fade", input, do_fade, nullptr);
 }
