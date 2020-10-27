@@ -66,30 +66,29 @@ long mmap(long x, long in_min, long in_max, long out_min, long out_max) {
 }
 WebThingAdapter *adapter;  // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
-const char *baseTypes[] = {"WiFiBase", "MAC Address", nullptr};
+
 const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
 const char *sensorTypes[] = {"Sensor", "Sensor", nullptr};
-const char *asyncProperties[] = {"asyncProperty", nullptr};
+const char *asyncProperties[] = {"asyncProperty", "I/O", nullptr};
 StaticJsonDocument<256> fadeInput;
 JsonObject fadeInputObj = fadeInput.to<JsonObject>();
 ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
 ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
-ThingDevice wifiBase("wifi", "MAC Address", baseTypes);
 
-ThingDevice lamp("LED", "ABC", lampTypes);
+ThingDevice lamp("LED", "Dimmable LED", lampTypes);
 ThingDevice AHT10Device("AHT10", "AHT10", sensorTypes);
 ThingDevice textDisplay("Text", "text Async Property Test", asyncProperties);
+ThingDevice testDevice("AHT10", "AHT10", sensorTypes);
 
-ThingProperty base("wifi", "MAC of base WiFi", STRING, "MAC adress");
+// Forward declaration
+void textDisplayTextChanged(ThingPropertyValue newVal);
 ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
 ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
 ThingProperty AHT10TemperatureProperty("Temperature", "Temperature in C", NUMBER, "Centigrades");
 ThingProperty AHT10HumidityProperty("Humidity", "Humidity (RH) %", NUMBER, "%");
-
-// Forward declaration
-void textDisplayTextChanged(ThingPropertyValue newVal);
-ThingProperty textDisplayText("text", "", STRING, nullptr,
-                              textDisplayTextChanged);
+//ThingProperty textDisplayText("text","text description",STRING,nullptr,textDisplayTextChanged);
+ThingProperty textDisplayText("text", "description", STRING, "yo", textDisplayTextChanged);
+ThingProperty testDeviceProperty("test", "testing", NUMBER, "%");
 // ThingProperty
 // textDisplayToggle("toggle","",STRING,nullptr,textDisplayToggled);
 // ThingProperty
@@ -155,18 +154,6 @@ void initAHT() {
     } else
         ESP_LOGI(TAG, "AHT10 or AHT20 found \n");
 }
-//----------------initSQL()-----------------------------------------
-void initSQL() {
-    if (mySqlConn.connect(mySqlIP, sqlPort, sqlUser, sqlPassword)) {
-        ESP_LOGI(TAG, "Connected to SQL On ->%s \n", (char *)mySqlIP.toString().c_str());
-
-        digitalWrite(ledPin, LOW);  // turn off active low led
-    } else {
-        ESP_LOGI(TAG, "Oh.. could not connect to SQL %s \n ", (char *)mySqlIP.toString().c_str());
-        ESP_LOGI(TAG, "Placing this station to Deep Sleep!. Press the Button(GPIO33) to wakeup\n");
-        esp_deep_sleep_start();
-    };
-}
 //----------------initAdapterAndAddDevices()------------------------
 void initAdapterAndAddDevices() {
     String x = WiFi.macAddress();
@@ -174,14 +161,8 @@ void initAdapterAndAddDevices() {
     adapter = new WebThingAdapter(x, WiFi.localIP());
     // devices and the properties
     {
-        // base.setValue(x.c_str());
-        printf("x.cstr()=%s\n", x.c_str());
-        wifiBase.id = x.c_str();
-        base.id = x.c_str();
-        printf("base desicrption=%s\n", base.description.c_str());
-        wifiBase.addProperty(&base);
         lamp.description = "A web conneced lamp";
-        lamp.title = "On/Off";
+        lamp.title = "Dimmable LED";
         lampLevel.title = "Brightness";
         lampLevel.minimum = 0;
         lampLevel.maximum = 100;
@@ -213,11 +194,14 @@ void initAdapterAndAddDevices() {
         AHT10Device.addProperty(&AHT10HumidityProperty);
 
         textDisplay.addProperty(&textDisplayText);
+        testDeviceProperty.readOnly = true;
+        testDevice.addProperty(&testDeviceProperty);
     }
-    adapter->addDevice(&wifiBase);
+
     adapter->addDevice(&lamp);
-    adapter->addDevice(&AHT10Device);
     adapter->addDevice(&textDisplay);
+    adapter->addDevice(&testDevice);
+    adapter->addDevice(&AHT10Device);
     adapter->begin();
     ESP_LOGI(TAG, "Webthing Adapter initialized with %i devices\n");
 }
@@ -241,49 +225,57 @@ void serializeDevice(ThingDevice d) {
     String out;
     doc["id"] = d.id;
 
-    // doc["id"] ="ss";
-    // doc["d.id"] = d.id;
     serializeJson(doc, out);
     ESP_LOGI(TAG, "serializeDevice:", out.c_str(), out.length());
 }
-#define RED = \033[0;31m
+String MACasID() {
+    String x = WiFi.macAddress();
+    x.replace(":", "");
+    return x;
+}
 //----registerDevices() in the SQL Serve from the adapter-----------
 void registerDevices() {
-    DynamicJsonDocument jd(1024);
-    JsonObject jb = jd.createNestedObject("base");
+    DynamicJsonDocument doc(2000);
+    doc["macId"]=MACasID();
+    JsonArray  devices = doc.createNestedArray(&"devices");
+    JsonObject device;
+    JsonArray props;
+    JsonObject prop;
     ThingDevice *d = adapter->getFirstDevice();
-    int eCode = 0;
-    String output, eMsg = "";
-    eCode = (d->title != "MAC Address") ? 1 : 0;
-    eMsg = (eCode != 0) ? "ERROR: MAC Addres is not defined!" : NULL;
-    jb["ErrorMsg"] = eMsg;
-    jb["errorCode"] = eCode;
-    jb["id"] = d->id;
-    jb["title"] = d->title;
-    JsonObject dev = jb.createNestedObject("devices");
-    JsonObject prop ;
+    int di = 0;
     while (d) {
-        if (d != adapter->getFirstDevice()) {  // ignore the base station address
-           
-            prop = dev.createNestedObject(d->id);
-        }
-        ThingProperty *p = d->firstProperty;
+        printf("\tIn D loop Id =%s\n", d->id.c_str());
+       device = devices.createNestedObject();
+        device["seed"] =di;
+        device["id"] =d->id;   
+        device["title"]=d->title;
+        device["name"]=d->id;    
+        props = device.createNestedArray("props"); 
+        ThingProperty *p=d->firstProperty;
+        int pi = 0;
         while (p) {
-            prop.getOrAddMember(p->id);
-            
+             printf("\t\tproperty for the device=%s:prop=%s di=%i pi=%i\n", d->id.c_str(), p->id.c_str(), di, pi);
+             prop=props.createNestedObject();
+          
+            prop["seed"]=pi;
+            prop["Id"]= p->id;
+            prop["dbId"]=p->propetyDbId;
+            prop["description"]=p->description;
+
+            pi++;
             p = (ThingProperty *)p->next;
+            
         }
-        d = d->next;
+        
+        di++;
+        d=d->next;
+        
     }
-    serializeJsonPretty(jd, output);
-    printf("\n%s \n\tl=%i\n", output.c_str(), output.length());
-
-    serializeJsonPretty(jd,Serial);
-  
  
-
-
-
+    serializeJsonPretty(doc, Serial);
+    printf("\n\n---------------------\n\n");
+    serializeJson(doc, Serial);
+    printf("\n\n");
     //ESP_LOGI(TAG, "\nout=\n%s\n\t\t len=%i\n", output.c_str(), output.length());
 }
 //------------------------------------------------------------------
@@ -292,9 +284,8 @@ void setup(void) {
     initMAX7219();               // (1) --- init MAX7219
     initAHT();                   // (2)----- init AHT------------------------------
     initWifi();                  // (3)------init WiFi-----------------------------
-    initSQL();                   // (4) --- init SQL-----------------------------------
-    initAdapterAndAddDevices();  // (5) -- intiAdapterAndAddDevices()------------------
-    registerDevices();           // (6) -- registerDevices() cantained in the adapter--
+    initAdapterAndAddDevices();  // (4) -- intiAdapterAndAddDevices()------------------
+    registerDevices();           // (5) -- registerDevices() cantained in the adapter--
 }
 static int i = 0;
 ThingPropertyValue toPvalueNumber(double n) {
