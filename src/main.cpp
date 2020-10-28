@@ -16,24 +16,19 @@
  * https://github.com/WebThingsIO/webthing-arduino/blob/master/examples/LEDLamp/LEDLamp.ino
  */
 #define LARGE_JSON_BUFFERS 1
-
 #include <Adafruit_AHTX0.h>
 #include <Arduino.h>
 #include <ArduinoOTA.h>
-#include <MySQL_Connection.h>
-#include <MySQL_Cursor.h>
 #include <SPI.h>
 #include <StreamUtils.h>
 #include <analogWrite.h>
-
 #include <map>
-
+#include <PubSubClient.h>
 #include "LedControl.h"
 #include "Thing.h"
-#include "WebThingAdapter.h"
+#include "WebthingAdapter.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "myUtils.h"
 #include "password.h"
 
 using namespace std;
@@ -53,17 +48,15 @@ const int lampPin = 2;
 // AHT10 pins
 const int pinSDA = 5;   // white wire
 const int pinSCL = 17;  // the purple
-
 // pin definitions for MAX7129
 const int pinCS = 15;   // Chip Select
 const int pinCLK = 18;  // Clock pin
 const int pinDIN = 23;  // Data
-const int anzMAX =
-    1;  // Anzahl der kaskadierten  Module = Number of Cascaded modules
-
+const int anzMAX = 1;  // Anzahl der kaskadierten  Module = Number of Cascaded modules
 long mmap(long x, long in_min, long in_max, long out_min, long out_max) {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
+String sDevicesJson="" ;
 WebThingAdapter *adapter;  // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
 
@@ -114,11 +107,43 @@ const unsigned char bluePin = 14;
 //  to detect the sensor board
 Adafruit_AHTX0 aht;
 WiFiClient client;
-MySQL_Connection mySqlConn(&client);
-char sQuery[300];
-String sqlStmt = "Call Iot.insertDevice('%s','%s','%s');";
+PubSubClient mqtt(client);
 //------------------------------------------------------------------
 LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
+//------------MQTT callback-----------------------------------------
+void mqtt_callback(char* topic,byte* payload,unsigned int length){
+    ESP_LOGI(TAG,"Message arrived[%s]\n",topic);
+  printf("HI here is the topic %s\n",topic);
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+}
+ 
+void mqtt_reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    printf("Attempting MQTT connection...\n");
+   
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    
+    if (mqtt.connect(clientId.c_str())) {
+      printf("\tconnected & now publishing \"outTopic\"\n" );
+      // Once connected, publish an announcement...
+      mqtt.publish("outTopic", "hello world");
+      mqtt.subscribe("HI");
+      // ... and resubscribe
+      mqtt.subscribe("greenBottles/#");
+    } else {
+     printf("Failed to connect ..\n");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
 //----------------Init MAX7219--------------------------------------
 void initMAX7219() {
     pinMode(ledPin, OUTPUT);
@@ -259,7 +284,9 @@ void registerDevices() {
           
             prop["seed"]=pi;
             prop["Id"]= p->id;
-            prop["dbId"]=p->propetyDbId;
+            prop["dbId"]=p-> propertyDbId;
+
+        
             prop["description"]=p->description;
 
             pi++;
@@ -274,18 +301,47 @@ void registerDevices() {
  
     serializeJsonPretty(doc, Serial);
     printf("\n\n---------------------\n\n");
-    serializeJson(doc, Serial);
+  // serializeJson(doc, Serial);
+
+    serializeJson(doc,sDevicesJson);
+    printf("json=%s\n\n",sDevicesJson.c_str());
     printf("\n\n");
     //ESP_LOGI(TAG, "\nout=\n%s\n\t\t len=%i\n", output.c_str(), output.length());
 }
+//----initMqtt( int MaxMsglen=256)----------------------------------  
+ void initMqtt(int maxMsgLen=256){
+  mqtt.setServer(MQTT_IP,MQTT_Port);
+  mqtt.setCallback(mqtt_callback);
+  mqtt.setBufferSize(maxMsgLen);
+  ESP_LOGI(TAG,"MQTT initialized with IP= %s:Port=%i  Max Messsage Length =%i\n",MQTT_IP.toString().c_str(),MQTT_Port,mqtt.getBufferSize());
+ }
 //------------------------------------------------------------------
+void mqttReConnect()
+{
+    while(!mqtt.connected())
+    {
+        printf("Attempting MQTT connection");
+        String clientId="ESP32Client-";
+        clientId+=String(random(0xffff),HEX);
+        if(mqtt.connect(clientId.c_str())){
+            ESP_LOGI(TAG,"Client connected, now publishing \"HI\"\n\t %s\n",sDevicesJson.c_str());
+            mqtt.publish("HI",sDevicesJson.c_str());
+            mqtt.subscribe("HO");
+        };
+    }
+}
+//------------------------------------------------------------------
+
 void setup(void) {
     esp_log_level_set(TAG, ESP_LOG_ERROR);
-    initMAX7219();               // (1) --- init MAX7219
-    initAHT();                   // (2)----- init AHT------------------------------
-    initWifi();                  // (3)------init WiFi-----------------------------
+    initMAX7219();               // (1) --- init MAX7219-------------------------------
+    initAHT();                   // (2)----- init AHT----------------------------------
+    initWifi();                  // (3)------init WiFi---------------------------------
     initAdapterAndAddDevices();  // (4) -- intiAdapterAndAddDevices()------------------
-    registerDevices();           // (5) -- registerDevices() cantained in the adapter--
+    initMqtt(1024);              // (5) -- initMqtt(1024) override default 256 --------
+    registerDevices();           // (6) --All devices in the adapter, Json form--------
+                                 // (7) mqtt_reconnect() will be executed in the LOOP--
+
 }
 static int i = 0;
 ThingPropertyValue toPvalueNumber(double n) {
@@ -293,21 +349,21 @@ ThingPropertyValue toPvalueNumber(double n) {
     pv.number = n;
     return pv;
 }
-void registerValueEvent(int dbid, String val) {  // make sure teh sqlStatment is set properly to
-    sprintf(sQuery, sqlStmt.c_str(), dbid, val);
-    ESP_LOGD(TAG, "Sql STatement = %s \n\t sQyert=%s\n", sqlStmt, sQuery);
-}
-ReadLoggingStream rs(Serial, Serial);
+
+// ReadLoggingStream rs(Serial, Serial);
 void readAHT10() {
     sensors_event_t humidity, temperature;
     aht.getEvent(&humidity, &temperature);  //   gcvt(humidity.relative_humidity,5,fs);
     AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
-    AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
-
-    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% dbid=%i : Tempurature=%.2lf dbid=%i \n", ++i, humidity.relative_humidity, AHT10HumidityProperty.propetyDbId, temperature.temperature, AHT10TemperatureProperty.propetyDbId);
+    AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature)); 
+    mqtt_reconnect();
+    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% dbid=%i : Tempurature=%.2lf dbid=%i \n", ++i, humidity.relative_humidity, AHT10HumidityProperty.propertyDbId, temperature.temperature, AHT10TemperatureProperty.propertyDbId);
 }
 void loop(void) {
     digitalWrite(23, HIGH);
+   
+    mqttReConnect();
+    
     readAHT10();
     adapter->update();  // pushit to the iot gateway
     delay(pushInterval);
