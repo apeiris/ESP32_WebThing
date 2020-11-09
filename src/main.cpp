@@ -18,9 +18,9 @@
 #define LARGE_JSON_BUFFERS 1
 #include <Adafruit_AHTX0.h>
 #include <Arduino.h>
-#include <ArduinoOTA.h>
+//#include <ArduinoOTA.h>
 #include <SPI.h>
-#include <StreamUtils.h>
+//#include <StreamUtils.h>
 #include <analogWrite.h>
 #include <map>
 #include <PubSubClient.h>
@@ -34,10 +34,10 @@
 using namespace std;
 static const char *TAG = "main.cpp";
 
-IPAddress mySqlIP(192, 168, 0, 10);
+
 /// Only used for monitoring, can be removed it's not part of our "thing"
 
-#define pushInterval (60000 / 1)
+#define pushInterval (60000 / 10)
 #if defined(LED_BUILTIN)
 const int ledPin = LED_BUILTIN;
 #else
@@ -56,7 +56,7 @@ const int anzMAX = 1;  // Anzahl der kaskadierten  Module = Number of Cascaded m
 long mmap(long x, long in_min, long in_max, long out_min, long out_max) {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
-String sDevicesJson="" ;
+String output="";
 WebThingAdapter *adapter;  // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
 
@@ -75,6 +75,7 @@ ThingDevice testDevice("AHT10", "AHT10", sensorTypes);
 
 // Forward declaration
 void textDisplayTextChanged(ThingPropertyValue newVal);
+void updateDeviceDbIds(String s);
 ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
 ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
 ThingProperty AHT10TemperatureProperty("Temperature", "Temperature in C", NUMBER, "Centigrades");
@@ -86,14 +87,13 @@ ThingProperty testDeviceProperty("test", "testing", NUMBER, "%");
 // textDisplayToggle("toggle","",STRING,nullptr,textDisplayToggled);
 // ThingProperty
 // textDisplayNumber("number","",STRING,nullptr,textDisplayNumbenewrChanged);
-String message = "message";
-String lastMessage = message;
+
 void textDisplayTextChanged(ThingPropertyValue newVal) {
     String x = *newVal.string;
     ESP_LOGI(TAG, "text=>%s\n", x.c_str());
 }
 
-String lastColor = "#ffffff";
+
 
 const unsigned char redPin = 12;
 const unsigned char greenPin = 13;
@@ -101,7 +101,7 @@ const unsigned char bluePin = 14;
 //---------------GPIO33 pulled low and connected to button to pull high to 3.3v
 #define BUTTON_WAKEUP_BITMASK 0x200000000  // 2^33 in hex / GPIO33
 //------------------------------------------------------------------
-
+IPAddress mqttIp= IPAddress(192,168,0,10);// dockerized broker on laptop
 //------------Adafruit Lib -----------------------------------------
 // the AHT must be connected to Bords SDA->GPIO21 and SCL ->GPIO22
 //  to detect the sensor board
@@ -111,39 +111,20 @@ PubSubClient mqtt(client);
 //------------------------------------------------------------------
 LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------MQTT callback-----------------------------------------
-void mqtt_callback(char* topic,byte* payload,unsigned int length){
-    ESP_LOGI(TAG,"Message arrived[%s]\n",topic);
+void callback(char* topic,byte* payload,unsigned int length){
+  printf("Message arrived[%s]\n",topic);
   printf("HI here is the topic %s\n",topic);
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
-  Serial.println();
 
+  
+  String s=String((char*)payload);
+  updateDeviceDbIds(s);
+   mqtt.publish("cb","Callback..");
 }
- 
-void mqtt_reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    printf("Attempting MQTT connection...\n");
-   
-    String clientId = "ESP32Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    
-    if (mqtt.connect(clientId.c_str())) {
-      printf("\tconnected & now publishing \"outTopic\"\n" );
-      // Once connected, publish an announcement...
-      mqtt.publish("outTopic", "hello world");
-      mqtt.subscribe("HI");
-      // ... and resubscribe
-      mqtt.subscribe("greenBottles/#");
-    } else {
-     printf("Failed to connect ..\n");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
+//------------------------------------------------------------------
+
 //----------------Init MAX7219--------------------------------------
 void initMAX7219() {
     pinMode(ledPin, OUTPUT);
@@ -231,35 +212,48 @@ void initAdapterAndAddDevices() {
     ESP_LOGI(TAG, "Webthing Adapter initialized with %i devices\n");
 }
 //------------------------------------------------------------------
-void registerDevice(ThingDevice *d, ThingProperty *p) {
-}
-//------------------------------------------------------------------
-void serielizeProperty(ThingProperty t) {
-    DynamicJsonDocument doc(500);
-    String out;
-    doc[t.title] = t.title;
-    doc[t.description] = t.description;
-    ThingDataValue x = t.getValue();
-    doc["value"] = x.number;
-    serializeJson(doc, out);
-    ESP_LOGI(TAG, "SerializeProperty=%s  \n\t len=%i\n", out.c_str(), out.length());
-}
-void serializeDevice(ThingDevice d) {
-    return;
-    DynamicJsonDocument doc(500);
-    String out;
-    doc["id"] = d.id;
 
-    serializeJson(doc, out);
-    ESP_LOGI(TAG, "serializeDevice:", out.c_str(), out.length());
-}
+
 String MACasID() {
     String x = WiFi.macAddress();
     x.replace(":", "");
     return x;
 }
+
+//----initMqtt( int MaxMsglen=256)----------------------------------  
+
+//------------------------------------------------------------------
+void mqttReConnect()
+{
+    mqtt.setBufferSize(2048);
+    
+    while(!mqtt.connected())
+    {
+        printf("Attempting MQTT connection\n");
+        String clientId="ESP32Client-";
+        clientId+=String(random(0xffff),HEX);  
+        mqtt.setBufferSize(2048);
+        if(mqtt.connect(clientId.c_str(),NULL,NULL)){
+           printf("MQTT buffer size=(%i)\n",mqtt.getBufferSize());
+           ESP_LOGI(TAG,"Client (%s) connected,\n\t now publishing \"HI\"\n\t \n\n",clientId.c_str());
+           // mqtt.publish("HI",sDevicesJson.c_str());
+            ESP_LOGI(TAG,"Buffer size=%i\n",mqtt.getBufferSize());
+            mqtt.publish_P("HI","12312",false);
+            mqtt.beginPublish("IOT/RegisterDevices",output.length(),false);
+                mqtt.print(output);
+            mqtt.endPublish();
+            printf("Waiting for message \"IOT/DevicesRegistered\n");
+            mqtt.subscribe("IOT/DevicesRegistered");    
+                  
+        }
+        else{
+            printf("Failed connect mqtt\n");
+            delay(5000);
+        };
+    }
+}
 //----registerDevices() in the SQL Serve from the adapter-----------
-void registerDevices() {
+String registerDevices() {
     DynamicJsonDocument doc(2000);
     doc["macId"]=MACasID();
     JsonArray  devices = doc.createNestedArray(&"devices");
@@ -269,7 +263,7 @@ void registerDevices() {
     ThingDevice *d = adapter->getFirstDevice();
     int di = 0;
     while (d) {
-        printf("\tIn D loop Id =%s\n", d->id.c_str());
+      //  printf("\tIn D loop Id =%s\n", d->id.c_str());
        device = devices.createNestedObject();
         device["seed"] =di;
         device["id"] =d->id;   
@@ -279,70 +273,61 @@ void registerDevices() {
         ThingProperty *p=d->firstProperty;
         int pi = 0;
         while (p) {
-             printf("\t\tproperty for the device=%s:prop=%s di=%i pi=%i\n", d->id.c_str(), p->id.c_str(), di, pi);
-             prop=props.createNestedObject();
-          
+          //  printf("\t\tproperty for the device=%s:prop=%s di=%i pi=%i\n", d->id.c_str(), p->id.c_str(), di, pi);
+            prop=props.createNestedObject();
             prop["seed"]=pi;
             prop["Id"]= p->id;
             prop["dbId"]=p-> propertyDbId;
-
-        
             prop["description"]=p->description;
-
             pi++;
             p = (ThingProperty *)p->next;
-            
         }
-        
         di++;
         d=d->next;
-        
     }
- 
-    serializeJsonPretty(doc, Serial);
-    printf("\n\n---------------------\n\n");
-  // serializeJson(doc, Serial);
-
-    serializeJson(doc,sDevicesJson);
-    printf("json=%s\n\n",sDevicesJson.c_str());
-    printf("\n\n");
-    //ESP_LOGI(TAG, "\nout=\n%s\n\t\t len=%i\n", output.c_str(), output.length());
+    String output ="";
+    serializeJson(doc,output);
+    return output;
 }
-//----initMqtt( int MaxMsglen=256)----------------------------------  
- void initMqtt(int maxMsgLen=256){
-  mqtt.setServer(MQTT_IP,MQTT_Port);
-  mqtt.setCallback(mqtt_callback);
-  mqtt.setBufferSize(maxMsgLen);
-  ESP_LOGI(TAG,"MQTT initialized with IP= %s:Port=%i  Max Messsage Length =%i\n",MQTT_IP.toString().c_str(),MQTT_Port,mqtt.getBufferSize());
- }
-//------------------------------------------------------------------
-void mqttReConnect()
-{
-    while(!mqtt.connected())
-    {
-        printf("Attempting MQTT connection");
-        String clientId="ESP32Client-";
-        clientId+=String(random(0xffff),HEX);
-        if(mqtt.connect(clientId.c_str())){
-            ESP_LOGI(TAG,"Client connected, now publishing \"HI\"\n\t %s\n",sDevicesJson.c_str());
-            mqtt.publish("HI",sDevicesJson.c_str());
-            mqtt.subscribe("HO");
-        };
+void updateDeviceDbIds(String s){
+    DynamicJsonDocument jd(2000);
+    deserializeJson(jd,s);
+    
+    ThingDevice *d = adapter->getFirstDevice();
+    int di = 0;
+    while (d) {
+        ThingProperty *p=d->firstProperty;
+        int pi = 0;
+        while (p) 
+        {
+            printf("\njd['devices'].[%i].props[%i].dbId=%i ,id=%s ",di,pi,(int)jd["devices"][di]["props"][pi]["dbId"],jd["devices"][di]["props"][pi]["Id"].as<String>().c_str());
+            p->propertyDbId=(int)jd["devices"][di]["props"][pi]["dbId"];
+            pi++;
+            p = (ThingProperty *)p->next;
+        }
+        di++;
+        d=d->next;
     }
 }
 //------------------------------------------------------------------
 
 void setup(void) {
-    esp_log_level_set(TAG, ESP_LOG_ERROR);
+    esp_log_level_set(TAG, ESP_LOG_INFO);
     initMAX7219();               // (1) --- init MAX7219-------------------------------
     initAHT();                   // (2)----- init AHT----------------------------------
     initWifi();                  // (3)------init WiFi---------------------------------
     initAdapterAndAddDevices();  // (4) -- intiAdapterAndAddDevices()------------------
-    initMqtt(1024);              // (5) -- initMqtt(1024) override default 256 --------
-    registerDevices();           // (6) --All devices in the adapter, Json form--------
-                                 // (7) mqtt_reconnect() will be executed in the LOOP--
-
-}
+    output=registerDevices();    // (6) --All devices in the adapter, Json form--------
+    mqtt.setBufferSize(2048);    mqtt.setCallback(callback);
+    mqtt.setServer(mqttIp,1883);
+        // Send the output->"FOO" to the MQTT Broker
+    // Broker will push it to the db and send the results with "BAR" topic
+    printf("Publishsing ->\n \t %s \n",output.c_str());
+ //   while(!mqtt.connected()) mqttReConnect();
+    mqtt.publish("FOO",output.c_str());
+    //ESP_LOGI(TAG, "\nout=\n%s\n\t\t len=%i n=%i\n", output.c_str(), output.length(),n);
+   
+ }
 static int i = 0;
 ThingPropertyValue toPvalueNumber(double n) {
     ThingPropertyValue pv;
@@ -350,19 +335,19 @@ ThingPropertyValue toPvalueNumber(double n) {
     return pv;
 }
 
-// ReadLoggingStream rs(Serial, Serial);
+ //ReadLoggingStream rs(Serial, Serial);
 void readAHT10() {
     sensors_event_t humidity, temperature;
     aht.getEvent(&humidity, &temperature);  //   gcvt(humidity.relative_humidity,5,fs);
     AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
     AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature)); 
-    mqtt_reconnect();
-    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% dbid=%i : Tempurature=%.2lf dbid=%i \n", ++i, humidity.relative_humidity, AHT10HumidityProperty.propertyDbId, temperature.temperature, AHT10TemperatureProperty.propertyDbId);
+    ESP_LOGI(TAG, "%05d Humidity=%.2lf%% dbid=%i : Temperature=%.2lf dbid=%i \n", ++i, humidity.relative_humidity, AHT10HumidityProperty.propertyDbId, temperature.temperature, AHT10TemperatureProperty.propertyDbId);
 }
 void loop(void) {
     digitalWrite(23, HIGH);
-   
+    
     mqttReConnect();
+    mqtt.loop();
     
     readAHT10();
     adapter->update();  // pushit to the iot gateway
