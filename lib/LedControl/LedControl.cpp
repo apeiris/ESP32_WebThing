@@ -115,14 +115,13 @@ void LedControl::printF(float n, char *format)
   std::string str(s);
   int l = str.length() - 1;
   int dp = l - str.find(".");
-  //  printf("originals=%s l=%i dp=%i\n", str.c_str(), l, dp);
-  printf("printF ->  %s \n",str.c_str());
+  ESP_LOGD(TAG," %s : format=%s",str.c_str(),format);
   if (dp < l) // if there is decimal in the string, lets remove it
   {
     str.erase(str.find("."), 1);
     strcpy(s, str.c_str());
     l = str.length() - 1; // we removed the . from the string
-    dp--;                 // slide it back one digit  to compensate for the reduced length
+    dp--;                 // slide back one digit  to compensate for the reduced length
   }
   //  printf("now  s=%s\n", s); // look ma no decimal here..
   bool b;
@@ -130,7 +129,6 @@ void LedControl::printF(float n, char *format)
   {
     b = i - 1 == dp ? true : false;
     setChar(0, i, s[l - i], b);
-  //  printf("i=%i :  %c  > b = %s dp=%i \n", i, s[l - i], btoa(b), dp);
   }
 }
 
