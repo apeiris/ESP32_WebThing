@@ -25,6 +25,8 @@
  */
 
 
+#define DLEDCONTROL
+#undef  DLEDCONTROL
 #include "LedControl.h"
 
 //the opcodes for the MAX7221 and MAX7219
@@ -115,7 +117,9 @@ void LedControl::printF(float n, char *format)
   std::string str(s);
   int l = str.length() - 1;
   int dp = l - str.find(".");
+#ifdef DLEDCONTROL
   ESP_LOGD(TAG," %s : format=%s",str.c_str(),format);
+#endif
   if (dp < l) // if there is decimal in the string, lets remove it
   {
     str.erase(str.find("."), 1);

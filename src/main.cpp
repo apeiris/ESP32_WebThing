@@ -15,17 +15,17 @@
  * this code is based on
  * https://github.com/WebThingsIO/webthing-arduino/blob/master/examples/LEDLamp/LEDLamp.ino
  */
+#define DdisplayString
+#undef DdisplayString
 #define LARGE_JSON_BUFFERS 1
 #define dbgx
 #include <Adafruit_AHTX0.h>
 #include <Arduino.h>
 //#include <ArduinoOTA.h>
 #include <SPI.h>
-//#include <StreamUtils.h>
 #include <analogWrite.h>
 #include <map>
 #include <PubSubClient.h>
-#include "LedControl.h"
 #include "Thing.h"
 #include "WebthingAdapter.h"
 #include "esp_log.h"
@@ -33,6 +33,8 @@
 #include "password.h"
 #include <iostream>
 #include <string>
+#include "max7219.h"
+
 #define debugActionGen
 #undef debugActionGen
 static int loopInterval = 5000;
@@ -62,16 +64,11 @@ static const char *TAG = "*";
 static int i = 0;
 //const char *asyncProperties[] = {"asyncProperty", "I/O", nullptr};
 //----forward declarations -------------------------------------
-
-const char *sensorTypes[] = {"Sensor", "Sensor", nullptr};
-ThingEvent eventAHT10("eventAHT10", "AHT10 raised an Event", NUMBER, "eventAHT10");
-ThingDevice deviceAHT10("AHT10", "AHT10", sensorTypes);
-void tc(ThingPropertyValue newValue);
 void updateDeviceDbIds(String s);
 //------------------------------------------------------------------
-const unsigned char redPin = 12;
-const unsigned char greenPin = 13;
-const unsigned char bluePin = 14;
+const unsigned char redPin = 25;
+const unsigned char greenPin = 26;
+const unsigned char bluePin = 27;
 //---------------GPIO33 pulled low and connected to button to pull high to 3.3v
 #define BUTTON_WAKEUP_BITMASK 0x200000000 // 2^33 in hex / GPIO33
 //------------------------------------------------------------------
@@ -82,6 +79,7 @@ IPAddress mqttIp = IPAddress(192, 168, 0, 10); // dockerized broker on laptop
 Adafruit_AHTX0 aht;
 WiFiClient client;
 PubSubClient mqtt(client);
+MAX7219 max7219;
 //----------Toggle built in LED-------------------------------------
 void toggleLed()
 {
@@ -89,9 +87,10 @@ void toggleLed()
     LEDon = !LEDon;
 }
 //------------------------------------------------------------------
-LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
+//LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
 //----------------Init MAX7219--------------------------------------
+/*
 void initMAX7219()
 {
     ESP_LOGI(TAG, "Initializing MAX7219..");
@@ -100,6 +99,7 @@ void initMAX7219()
     lc.clearDisplay(0);
     lc.printF(0, (char *)"%0.2f");
 }
+*/
 //--------------------initWifi()------------------------------------
 void initWifi()
 {
@@ -129,32 +129,14 @@ void initAHT()
 //StaticJsonDocument<256> fadeInput;
 StaticJsonDocument<256> sJdoc;
 JsonObject jObj = sJdoc.to<JsonObject>();
-
 //--------------------lamp (LED) stuff ---------------------------
-const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
-ThingDevice lamp("urn:dev:ops:my-lamp-1234", "My Lamp", lampTypes);
-ThingProperty lampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
-ThingProperty lampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
-StaticJsonDocument<256> fadeInput;
-JsonObject fadeInputObj = fadeInput.to<JsonObject>();
-ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
-ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
-bool lastOn=true;
+
+//------------Setup device and props for StationId------------------
+
+//--------timer-79a21fe843a96acf36c6810cd5b57bf0--------------------
 
 //------------------------------------------------------------------
-ThingProperty AHT10TemperatureProperty("Temperature", "Temperature in C", NUMBER, "Centigrades");
-ThingProperty AHT10HumidityProperty("Humidity", "Humidity (RH) %", NUMBER, "%");
-//------------Setup device and props for StationId------------------
-JsonObject jStation = sJdoc.to<JsonObject>();
-const char *stationIdTypes[] = {"StationId", "YOHOO", nullptr};
-ThingDevice stationDevice("StationId", "Station", stationIdTypes);
-ThingProperty stationIdProperty("StationId", "desc", STRING, "macIdProperty", nullptr);
-ThingProperty              text("text"      ,""    ,STRING ,nullptr,tc);
-ThingProperty stationIPProperty("StationIP", "desc", STRING,nullptr,tc);
-ThingProperty stationLoopIntervalPropery("LoopInterval", "Loop delay in milli seconds", INTEGER, "Loop Interval");
-ThingAction liChanged("liChanged", "Loop Interval change", "Change the Loop Interval (Dealy)", "Interval change", &jStation, action_generator);
 //------------callback----------------------------------------------
-
 void WifiEvent(WiFiEvent_t e, WiFiEventInfo_t i)
 {
     switch (e)
@@ -164,13 +146,12 @@ void WifiEvent(WiFiEvent_t e, WiFiEventInfo_t i)
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
         ESP_LOGI(TAG, "Wifif GOT_IP(%d,%d) - IP:", e, i);
-        ESP_LOGI(TAG,"Local Ip=%s",WiFi.localIP().toString().c_str());
-         
+        ESP_LOGI(TAG, "Local Ip=%s", WiFi.localIP().toString().c_str());
+
         break;
     default:
         ESP_LOGI(TAG, "Wifi Event (%d,%d)\n", e, i);
         break;
-
     }
 }
 void mqttCallback(char *topic, byte *payload, unsigned int length)
@@ -192,6 +173,24 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     mqtt.publish("cb", "Callback..");
 }
 //------------------------------------------------------------------
+#pragma region AHT10 defines
+//-----------------AHT10 Ambient sensor-----------------------------
+const char *AHT10Types[] = {"AmbientSensor", nullptr};
+ThingDevice deviceAHT10("AHT10", "AHT10 Ambient Sensor", AHT10Types);
+ThingProperty propertyAHT10Temp("Temperature", "", NUMBER, "Tempurature");
+ThingProperty propertyAHT10Humidity("Humidity", "", NUMBER, "Humidity");
+#pragma endregion AHT10 defines
+#pragma region lamp defines
+const char *lampTypes[] = {"OnOffSwitch", "Light", nullptr};
+ThingDevice deviceLamp("lamp", "My Lamp", lampTypes);
+ThingProperty propertyLampOn("on", "Whether the lamp is turned on", BOOLEAN, "OnOffProperty");
+ThingProperty propertyLampLevel("brightness", "The level of light from 0-100", INTEGER, "BrightnessProperty");
+StaticJsonDocument<256> fadeInput;
+JsonObject fadeInputObj = fadeInput.to<JsonObject>();
+ThingAction fade("fade", "Fade", "Fade the lamp to a given level", "FadeAction", &fadeInputObj, action_generator);
+ThingEvent overheated("overheated", "The lamp has exceeded its safe operating temperature", NUMBER, "OverheatedEvent");
+bool lastOn = true;
+#pragma endregion lamp defines
 //------------------------------------------------------------------
 void initAdapterAndAddDevices()
 {
@@ -200,73 +199,52 @@ void initAdapterAndAddDevices()
     adapter = new WebThingAdapter(x, WiFi.localIP());
     { // devices and the properties
         ESP_LOGI(TAG, "adapter=newWebThingAdapter(\"%s\",\"%s\")\n", x.c_str(), WiFi.localIP().toString().c_str());
-        const char *pMacId;
-        stationDevice.id = "Station";
-        stationDevice.title = pMacId;
-        jObj["type"] = "object";
-        JsonObject liChangedProps = jObj.createNestedObject("properties");
-        JsonObject loopIntervalInput = liChangedProps.createNestedObject("loopInterval");
-        loopIntervalInput["type"] = "integer";
-        loopIntervalInput["minimum"] = 1000;   // 1 second
-        loopIntervalInput["maximum"] = 360000; // 1 hour
-        //----------------------Station--------------------
-        //---------Station Device ------------------------
-        pMacId = sMacId.c_str();
-        ThingDataValue sValue = {.string = (String *)pMacId};
-        stationIdProperty.setValue(sValue);
-        stationIdProperty.readOnly = true;
-     //   stationIPProperty.setValue(sValue); set at RegisterIP
-        // stationIPProperty.readOnly=true;
-        ThingDataValue iValue = {.integer = loopInterval};
-        ESP_LOGD(TAG, "setting loopInterval= %i", loopInterval);
-        stationLoopIntervalPropery.setValue(iValue);
-        stationDevice.addProperty(&stationIdProperty);
-        stationDevice.addProperty(&stationLoopIntervalPropery);
-        stationDevice.addProperty(&stationIPProperty);
-        //-- actions
-        stationDevice.addAction(&liChanged);
-        adapter->addDevice(&stationDevice);
-        //---------Lamp-----------------------------------
-        lamp.description="A web connected lamp";
-        lamp.title=("On/Off");
-        lamp.addProperty(&lampOn);
-
-        lampLevel.title="Brightness";
-        lampLevel.minimum = 0;
-        lampLevel.maximum = 100;
-        lampLevel.unit = "percent";
-        lamp.addProperty(&lampLevel);
-        // create fade Input object and json
-        fadeInputObj["type"]="object";
-        JsonObject fadeInputProperties = fadeInputObj.createNestedObject("properties");            // must be properties
-        JsonObject brightnessInput = fadeInputProperties.createNestedObject("brightness"); //"brightness" mustmatch property
-        brightnessInput["type"] = "integer";
-        brightnessInput["minimum"] = 0;
-        brightnessInput["maximum"] = 100;
-        brightnessInput["unit"] = "percent";
-        JsonObject durationInput = fadeInputProperties.createNestedObject("duration");
-        durationInput["type"]="integer";
-        durationInput["minimum"]=1;
-        durationInput["unit"]="milliseconds";
-        lamp.addAction(&fade);
-
-        overheated.unit = "degree C";
-
-        lamp.addEvent(&overheated);
-        adapter->addDevice(&lamp);
+#pragma region AHT10
         //-------------------------------------------------------------------
-        AHT10TemperatureProperty.readOnly = true;
-        deviceAHT10.addProperty(&AHT10TemperatureProperty);
-        AHT10HumidityProperty.readOnly = true;
-        deviceAHT10.addProperty(&AHT10HumidityProperty);
-        // deviceAHT10.addEvent(&eventAHT10);
+        propertyAHT10Humidity.readOnly = true;
+        propertyAHT10Humidity.unit = " %";
+        propertyAHT10Temp.readOnly = true;
+        propertyAHT10Temp.unit = " °C";
+        deviceAHT10.addProperty(&propertyAHT10Temp);
+        deviceAHT10.addProperty(&propertyAHT10Humidity);
         adapter->addDevice(&deviceAHT10);
-        // adding experimental event listener
-        //--------------------------------------------------------------------
+#pragma endregion AHT10
+#pragma region lamp
+        deviceLamp.description = "A web connected lamp";
+        propertyLampOn.title = "On/Off";
+        deviceLamp.addProperty(&propertyLampOn);
+
+        propertyLampLevel.title = "Brightness";
+        propertyLampLevel.minimum = 0;
+        propertyLampLevel.maximum = 100;
+        propertyLampLevel.unit = "percent";
+        deviceLamp.addProperty(&propertyLampLevel);
+
+  fadeInputObj["type"] = "object";
+  JsonObject fadeInputProperties =
+      fadeInputObj.createNestedObject("properties");
+  JsonObject brightnessInput =
+      fadeInputProperties.createNestedObject("brightness");
+  brightnessInput["type"] = "integer";
+  brightnessInput["minimum"] = 0;
+  brightnessInput["maximum"] = 100;
+  brightnessInput["unit"] = "percent";
+  JsonObject durationInput =
+      fadeInputProperties.createNestedObject("duration");
+  durationInput["type"] = "integer";
+  durationInput["minimum"] = 1;
+  durationInput["unit"] = "milliseconds";
+  deviceLamp.addAction(&fade);
+
+  overheated.unit = "degree celsius";
+  deviceLamp.addEvent(&overheated);
+        adapter->addDevice(&deviceLamp);
+#pragma endregion lamp
     }
     adapter->begin();
     ESP_LOGI(TAG, "Webthing Adapter initialized");
 }
+
 //------------------------------------------------------------------
 void setMacId()
 {
@@ -297,8 +275,8 @@ void mqttReConnect()
         }
         else
         {
-           // ESP_LOGE(TAG, "***** Failed connect mqtt *****\nRebooting..");
-           // ESP.restart();
+            // ESP_LOGE(TAG, "***** Failed connect mqtt *****\nRebooting..");
+            // ESP.restart();
             ESP_LOGE(TAG, "***** Failed connect mqtt *****\nEntering deep sleep..");
             esp_deep_sleep(10000000);
         };
@@ -308,10 +286,9 @@ void mqttReConnect()
 String getAdapterJson()
 {
 
-
     DynamicJsonDocument doc(2000);
     doc["macId"] = sMacId;
-  //  doc["IP"]=WiFi.localIP().toString();
+    //  doc["IP"]=WiFi.localIP().toString();
 
     JsonArray devices = doc.createNestedArray(&"devices");
     JsonObject device;
@@ -378,51 +355,22 @@ void updateDeviceDbIds(String s)
 String getPropertiesJson(ThingDevice *d)
 {
     DynamicJsonDocument doc(2000);
-
     JsonObject prop;
     doc["StationId"] = sMacId;
-
     doc["Device"] = d->id;
     JsonArray props = doc.createNestedArray(&"props");
     ThingProperty *p = d->firstProperty;
-
     while (p)
     {
         prop = props.createNestedObject();
-
         prop["Id"] = p->id;
-
         prop["value"] = p->getValue().number;
-
         prop["dbId"] = p->propertyDbId;
-        ESP_LOGI(TAG, "aType %d ,type=%d id=%s", p->atType, p->type, p->id.c_str());
-
         p = (ThingProperty *)p->next;
     }
     String s = "";
     serializeJson(doc, s);
-    ///ESP_LOGI(TAG, "Seriealize =%s\n", s.c_str());
     return s;
-}
-//------------------------------------------------------------------
-void tc(ThingPropertyValue newValue) {
- ESP_LOGI(TAG,"*************************New message : ");
-  Serial.println(*newValue.string);
-  ESP_LOGI(TAG,"%s",*newValue.string->c_str());
-}
-
-   
-//------------------------------------------------------------------
-void RegisterIP()
-{
-    ThingPropertyValue value;
-    String msg=WiFi.localIP().toString();  
-    value.string= &msg;   
-    ESP_LOGI(TAG,"*********   value.string->cstr() = %s",value.string->c_str());
-    text.setValue(value);
-    tc(value);
-    //stationIPProperty.setValue(value);
-   //ESP_LOGI(TAG,"stationIPPropety.getValue()=%s",stationIdProperty.getValue().string->c_str());
 }
 //------------------------------------------------------------------
 void setup(void)
@@ -431,26 +379,37 @@ void setup(void)
     Serial.begin(115200);
     // WiFi.onEvent(WiFiStationConnected,SYSTEM_EVENT_STA_CONNECTED);
     WiFi.onEvent(WifiEvent, SYSTEM_EVENT_STA_GOT_IP);
-    WiFi.onEvent(WifiEvent,SYSTEM_EVENT_WIFI_READY);
+    WiFi.onEvent(WifiEvent, SYSTEM_EVENT_WIFI_READY);
     pinMode(ledPin, OUTPUT);
+    pinMode(redPin, OUTPUT);
+    pinMode(greenPin, OUTPUT);
+    pinMode(bluePin, OUTPUT);
+
+    digitalWrite(redPin, LOW);
+    digitalWrite(greenPin, LOW);
+    digitalWrite(bluePin, LOW);
+
     digitalWrite(ledPin, HIGH);
     ESP_LOGI(TAG, "Connecting to %s \n", ssid);
     //--- RTC wakeup on gpio 33 (wired to button)
     esp_sleep_enable_ext1_wakeup(BUTTON_WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
-
+    max7219.Begin();
     setMacId();
-    initMAX7219(); // (1) --- init MAX7219-------------------------------
+    //initMAX7219(); // (1) --- init MAX7219-------------------------------
+    
     initAHT();     // (2)----- init AHT----------------------------------
     //-------------hook the handler
     // WiFi.onEvent(WiFiStationConnected, SYSTEM_EVENT_STA_CONNECTED);
 
-    initWifi();                 // (3)------init WiFi---------------------------------
-   
-    initAdapterAndAddDevices(); // (4) -- intiAdapterAndAddDevices()------------------
-     //RegisterIP();
-     output = getAdapterJson();  // (6) --All devices in the adapter, Json form--------
+    initWifi(); // (3)------init WiFi---------------------------------
 
-    deviceAHT10.addEvent(&eventAHT10);
+    initAdapterAndAddDevices(); // (4) -- intiAdapterAndAddDevices()------------------
+    ThingPropertyValue initialOn = {.boolean = true};
+    propertyLampOn.setValue(initialOn);
+    (void)propertyLampOn.changedValueOrNull();
+    //RegisterIP();
+    output = getAdapterJson(); // (6) --All devices in the adapter, Json form--------
+
     mqtt.setCallback(mqttCallback);
     mqtt.setServer(mqttIp, 1883);
     //-----------------------Setup area for WIFI event test---------------------
@@ -464,8 +423,7 @@ void setup(void)
     while (!mqtt.connected())
         mqttReConnect();
     mqtt.publish(topic.c_str(), output.c_str());
-    ESP_LOGI(TAG, "\nout=\n%s\n\t\t len=%i", output.c_str(), output.length());
-    
+    ESP_LOGI(TAG, "\ndeclare @json nvarchar(max)=\'%s\'\n\t\t len=%i", output.c_str(), output.length());
 
     // stationIPProperty.setValue(v);
     //--------------------------------------------------------------------------
@@ -474,6 +432,7 @@ ThingPropertyValue toPvalueNumber(double n)
 {
     ThingPropertyValue pv;
     pv.number = n;
+    // ESP_LOGI(TAG,"double n=%d",pv.number);
     return pv;
 }
 ThingPropertyValue toPvalueString(String s)
@@ -491,15 +450,21 @@ void readAHT10()
 
     if (deviceAHT10.ws->availableForWriteAll())
     {
-        AHT10HumidityProperty.setValue(toPvalueNumber(humidity.relative_humidity));
-        AHT10TemperatureProperty.setValue(toPvalueNumber(temperature.temperature));
-        ESP_LOGI(TAG, "%05d Hum=%.2lf%% dbid=%i:Temp=%.2lf dbid=%i   Heap=%d,%d", ++i, humidity.relative_humidity, AHT10HumidityProperty.propertyDbId, temperature.temperature, AHT10TemperatureProperty.propertyDbId, ESP.getFreeHeap(), deviceAHT10.ws->count());
-        if (AHT10HumidityProperty.propertyDbId != -1)
+        propertyAHT10Humidity.setValue(toPvalueNumber(humidity.relative_humidity));
+
+        char t[20];
+        sprintf(t, "%.2lfc", temperature.temperature);
+
+        propertyAHT10Temp.setValue(toPvalueNumber(temperature.temperature));
+
+        ESP_LOGI(TAG, "%05d  t%s Hum=%.2lf%% dbid=%i:Temp=%.2lf dbid=%i   Heap=%d,%d", ++i, t, humidity.relative_humidity, propertyAHT10Temp.propertyDbId, temperature.temperature, propertyAHT10Temp.propertyDbId, ESP.getFreeHeap(), deviceAHT10.ws->count());
+        if (propertyAHT10Temp.propertyDbId != -1)
         {
             String eData = getPropertiesJson(&deviceAHT10);
             mqtt.publish("IOT/DeviceEvent", eData.c_str());
+            max7219.Clear();
+            max7219.DisplayText(t,1);
         }
-       // deviceAHT10.ws->cleanupClients();
     }
     else
     {
@@ -516,39 +481,36 @@ void readAHT10()
 void loop(void)
 {
     digitalWrite(23, HIGH);
-    //mqttReConnect();
+
     mqtt.loop();
     readAHT10();
+
     adapter->update(); // pushit to the iot gateway
+
     delay(loopInterval);
 }
+
 void do_fade(const JsonVariant &input)
 {
     JsonObject inputObj = input.as<JsonObject>();
-    ESP_LOGD(TAG, "inputObj=%i", input.as<long>());
     long long int duration = inputObj["duration"];
     long long int brightness = inputObj["brightness"];
+
     delay(duration);
 
     ThingDataValue value = {.integer = brightness};
-    lampLevel.setValue(value);
-    int level = (int)Arduino_h::map(brightness, 0, 100, 255, 0);
-    ESP_LOGD(TAG, "value =%i , level(mapped)=%d ", (int)value.integer, level);
-    analogWrite(lampPin, level, 255);
-    lc.clearDisplay(0);
-    lc.printF((float)brightness, (char *)"%.2f");
+    propertyLampLevel.setValue(value);
+    int level = map(brightness, 0, 100, 255, 0);
+    analogWrite(lampPin, level);
+
     ThingDataValue val;
-    val.number=102;
+    val.number = 102;
     ThingEventObject *ev = new ThingEventObject("overheated", NUMBER, val);
-    ESP_LOGI(TAG, " Queu event(overheated) %2.2f", val.number);
-    lamp.queueEventObject(ev);
+    ESP_LOGI(TAG,"Queued Event ->%s",ev->name.c_str());
+    deviceLamp.queueEventObject(ev);
 }
+
 ThingActionObject *action_generator(DynamicJsonDocument *input)
 {
-
-    String output;
-    serializeJson(*input, output);
-    ESP_LOGD(TAG, "Serialized(*input) \n\t\toutput=%s\n", output.c_str());
-
     return new ThingActionObject("fade", input, do_fade, nullptr);
 }
