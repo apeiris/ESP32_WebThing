@@ -15,5 +15,6 @@ ESP32-WebThing is integrated with
   AHT10 - Temperature/Humidiy Sensor
   
   Local folder is
+  
   C:\Users\...\OneDrive\Documents\PlatformIO\Projects\ESP32-WebThing>
   
