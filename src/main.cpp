@@ -34,7 +34,6 @@
 #include <iostream>
 #include <string>
 #include "max7219.h"
-
 #define debugActionGen
 #undef debugActionGen
 // .5 minute interval
@@ -50,6 +49,7 @@ const int ledPin =
     2; // manually configure LED pin was 13, 2 is the blue led built in
 const int lampPin = 2;
 #endif
+
 // AHT10 pins
 const int pinSDA = 5;  // white wire
 const int pinSCL = 17; // the purple
@@ -64,12 +64,13 @@ ThingActionObject *action_generator(DynamicJsonDocument *);
 static String sMacId = "";
 String sIP = "sIPinit";
 String sIPLast = sIP;
+
 bool LEDon = false;
 static const char *TAG = "*";
 static int i = 0;
 static bool bGotIp = false;
 //const char *asyncProperties[] = {"asyncProperty", "I/O", nullptr};
-//----forward declarations -------------------------------------
+//----forward declarations -----------------------------------------
 void updateDeviceDbIds(String s);
 //------------------------------------------------------------------
 const unsigned char redPin = 25;
@@ -356,7 +357,7 @@ void updateDeviceDbIds(String s)
 //------------------------------------------------------------------
 String getPropertiesJson(ThingDevice *d)
 {
-    ESP_LOGD(TAG, "getPropertiesJson");
+   // ESP_LOGD(TAG, "getPropertiesJson");
     DynamicJsonDocument doc(2500);
     JsonObject prop;
     doc["StationId"] = sMacId;
@@ -381,6 +382,7 @@ void setup(void)
 {
 
     Serial.begin(115200);
+  
     // WiFi.onEvent(WiFiStationConnected,SYSTEM_EVENT_STA_CONNECTED);
     WiFi.onEvent(WifiEvent, SYSTEM_EVENT_STA_GOT_IP);
    
@@ -398,6 +400,8 @@ void setup(void)
     //--- RTC wakeup on gpio 33 (wired to button)
     esp_sleep_enable_ext1_wakeup(BUTTON_WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
     max7219.Begin();
+         max7219.DisplayText(( char *)"no cue", 1);
+    
     // setMacId();
     //initMAX7219(); // (1) --- init MAX7219-------------------------------
 
@@ -406,6 +410,7 @@ void setup(void)
     // WiFi.onEvent(WiFiStationConnected, SYSTEM_EVENT_STA_CONNECTED);
 
     initWifi(); // (3)------init WiFi---------------------------------
+ 
 
     initAdapterAndAddDevices(); // (4) -- intiAdapterAndAddDevices()------------------
     ThingPropertyValue initialOn = {.boolean = true};
