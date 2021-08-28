@@ -79,7 +79,9 @@ const unsigned char bluePin = 27;
 //---------------GPIO33 pulled low and connected to button to pull high to 3.3v
 #define BUTTON_WAKEUP_BITMASK 0x200000000 // 2^33 in hex / GPIO33
 //------------------------------------------------------------------
-IPAddress mqttIp = IPAddress(10, 88, 111, 6); // dockerized broker on laptop
+//IPAddress mqttIp = IPAddress(10, 88, 111, 6); // dockerized broker on laptop
+IPAddress mqttIp = IPAddress(192,168,86,23); // dockerized broker on laptop
+
 //------------Adafruit Lib -----------------------------------------
 // the AHT must be connected to Bords SDA->GPIO21 and SCL ->GPIO22
 //  to detect the sensor board
@@ -171,6 +173,9 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     mqtt.publish("cb", "Callback..");
 }
 //------------------------------------------------------------------
+#pragma region Staion
+const char *StationTypes[]={""};
+#pragma endregion Station
 #pragma region AHT10 defines
 //-----------------AHT10 Ambient sensor-----------------------------
 const char *AHT10Types[] = {"AmbientSensor", nullptr};
@@ -332,7 +337,11 @@ void updateDeviceDbIds(String s)
 {
     DynamicJsonDocument jd(2000);
     ESP_LOGI(TAG, "updateDeviceDbIds ->Gotten Json=%s\n", s.c_str());
-    deserializeJson(jd, s);
+    DeserializationError err=deserializeJson(jd, s);
+    if(err){
+        ESP_LOGD(TAG,"Deserialization error %s",err.f_str());
+        return;
+    }
     ThingDevice *d = adapter->getFirstDevice();
     int di = 0;
     ESP_LOGD(TAG, "\n");
