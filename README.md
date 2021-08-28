@@ -1,4 +1,4 @@
-# ESP32-WebThing
+# ESP32_WebThing
 This is  implentation of Webthings.IO/Webthing-arduino thing server on ESP32-WROOM dev-kit.
 
  
@@ -16,5 +16,5 @@ ESP32-WebThing is integrated with
   
   Local folder is
   
-  C:\Users\...\OneDrive\Documents\PlatformIO\Projects\ESP32-WebThing>
+  C:\Users\...\OneDrive\Documents\PlatformIO\Projects\ESP32_WebThing>
   
