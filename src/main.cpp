@@ -1,4 +1,12 @@
-// current device mac 2462ABCEBDBC
+/*****************************************************************
+ * Companion docker-compose yaml file to run MQTT & node-red
+ * is in C:\DOCKER\NODE_RED 
+ * 
+
+   current device mac 2462ABCEBDBC
+
+
+*****************************************************************/
 // * Tested on ESP8266, ESP32, Arduino boards with WINC1500 modules (shields or
 // t11
 
@@ -34,6 +42,7 @@
 #include <iostream>
 #include <string>
 #include "max7219.h"
+#include "spiffs.h"
 #define debugActionGen
 #undef debugActionGen
 // .5 minute interval
@@ -59,6 +68,7 @@ const int pinCS = 19;  // Chip Select
 const int pinDIN = 23; // Data
 const int anzMAX = 1;  // Anzahl der kaskadierten  Module = Number of Cascaded modules
 String output = "";
+StaticJsonDocument<2000> config;
 WebThingAdapter *adapter; // adapter could then be used as as device
 ThingActionObject *action_generator(DynamicJsonDocument *);
 static String sMacId = "";
@@ -69,6 +79,8 @@ bool LEDon = false;
 static const char *TAG = "*";
 static int i = 0;
 static bool bGotIp = false;
+//const char* ssid="";
+//const char* password="";
 //const char *asyncProperties[] = {"asyncProperty", "I/O", nullptr};
 //----forward declarations -----------------------------------------
 void updateDeviceDbIds(String s);
@@ -80,7 +92,7 @@ const unsigned char bluePin = 27;
 #define BUTTON_WAKEUP_BITMASK 0x200000000 // 2^33 in hex / GPIO33
 //------------------------------------------------------------------
 //IPAddress mqttIp = IPAddress(10, 88, 111, 6); // dockerized broker on laptop
-IPAddress mqttIp = IPAddress(192,168,86,23); // dockerized broker on laptop
+IPAddress mqttIp;// = IPAddress(192, 168, 86, 23); // dockerized broker on laptop
 
 //------------Adafruit Lib -----------------------------------------
 // the AHT must be connected to Bords SDA->GPIO21 and SCL ->GPIO22
@@ -99,10 +111,19 @@ void toggleLed()
 //LedControl lc = LedControl(pinDIN, pinCLK, pinCS, 1);
 //------------------------------------------------------------------
 //--------------------initWifi()------------------------------------
+ const char* ssid;
+ const char* password;
 void initWifi()
 {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+    WiFi.mode(WIFI_STA);   
+
+    
+    ESP_LOGI(TAG,"Connecting to ssid %s with password %s\n\n",ssid,config["password"].as<String>().c_str());
+ 
+   
+    ESP_LOGI(TAG,"ssid=%s , password=%s\n",ssid,password);
+   WiFi.begin(ssid, password);
+   // WiFi.begin(config["ssid"].as<String>().c_str(),config["password"].as<String>().c_str());
     bool blink = false;
     ESP_LOGI(TAG, "Waiting WiFi == WL_CONNECTED \n\t");
     while (WiFi.status() != WL_CONNECTED)
@@ -143,11 +164,11 @@ void WifiEvent(WiFiEvent_t e, WiFiEventInfo_t i)
     case SYSTEM_EVENT_STA_GOT_IP:
         bGotIp = false;
         delay(10);
-        sIP=WiFi.localIP().toString().c_str();
+        sIP = WiFi.localIP().toString().c_str();
         delay(10);
         ESP_LOGI(TAG, "GOT_IP Local Ip=%s", sIP);
         bGotIp = true;
-    
+
         break;
     default:
         ESP_LOGI(TAG, "Wifi Event (%d,%d)\n", e, i);
@@ -174,7 +195,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
 }
 //------------------------------------------------------------------
 #pragma region Staion
-const char *StationTypes[]={""};
+const char *StationTypes[] = {""};
 #pragma endregion Station
 #pragma region AHT10 defines
 //-----------------AHT10 Ambient sensor-----------------------------
@@ -294,9 +315,9 @@ String getAdapterJson()
         ESP_LOGD(TAG, "Looping until IP is set");
         delay(100);
     }
-    doc["IP"] =sIP;
+    doc["IP"] = sIP;
 
-    JsonArray devices = doc.createNestedArray(&"devices");
+    JsonArray devices = doc.createNestedArray("devices");
     JsonObject device;
     JsonArray props;
     JsonObject prop;
@@ -337,9 +358,10 @@ void updateDeviceDbIds(String s)
 {
     DynamicJsonDocument jd(2000);
     ESP_LOGI(TAG, "updateDeviceDbIds ->Gotten Json=%s\n", s.c_str());
-    DeserializationError err=deserializeJson(jd, s);
-    if(err){
-        ESP_LOGD(TAG,"Deserialization error %s",err.f_str());
+    DeserializationError err = deserializeJson(jd, s);
+    if (err)
+    {
+        ESP_LOGD(TAG, "Deserialization error %s", err.f_str());
         return;
     }
     ThingDevice *d = adapter->getFirstDevice();
@@ -366,12 +388,12 @@ void updateDeviceDbIds(String s)
 //------------------------------------------------------------------
 String getPropertiesJson(ThingDevice *d)
 {
-   // ESP_LOGD(TAG, "getPropertiesJson");
+    // ESP_LOGD(TAG, "getPropertiesJson");
     DynamicJsonDocument doc(2500);
     JsonObject prop;
     doc["StationId"] = sMacId;
     doc["Device"] = d->id;
-    JsonArray props = doc.createNestedArray(&"props");
+    JsonArray props = doc.createNestedArray("props");
     ThingProperty *p = d->firstProperty;
     while (p)
     {
@@ -387,14 +409,42 @@ String getPropertiesJson(ThingDevice *d)
     return s;
 }
 //------------------------------------------------------------------
+
 void setup(void)
 {
 
     Serial.begin(115200);
-  
+    const char *configFile = "/config.dat";
+
+    if (!SPIFFS.begin(true))
+    {
+        ESP_LOGI(TAG, "SPIFF ????????????????");
+        return;
+    }
+    File file = SPIFFS.open(configFile, FILE_READ);
+    if (!file)
+    {
+        ESP_LOGI(TAG, "Could not open  %s \n", configFile);
+        return;
+    }
+    else
+    {
+        ESP_LOGI(TAG, "SPIFFS mounted successfully..\n\n\n");
+        String s = "";
+        file.seek(0);
+        while (file.available())
+            s = file.readString();
+        deserializeJson(config,s);
+
+        ESP_LOGI(TAG,"config %s\n",s.c_str());
+        ssid=(const char*)config["ssid"];
+        password=(const char *)config["password"];
+        ESP_LOGI(TAG, "ssid=%s , password=%s\n", ssid,password);
+        mqttIp.fromString(config["mqttIP"].as<String>());
+    }
     // WiFi.onEvent(WiFiStationConnected,SYSTEM_EVENT_STA_CONNECTED);
     WiFi.onEvent(WifiEvent, SYSTEM_EVENT_STA_GOT_IP);
-   
+
     pinMode(ledPin, OUTPUT);
     pinMode(redPin, OUTPUT);
     pinMode(greenPin, OUTPUT);
@@ -405,12 +455,12 @@ void setup(void)
     digitalWrite(bluePin, LOW);
 
     digitalWrite(ledPin, HIGH);
-    ESP_LOGI(TAG, "Connecting to %s \n", ssid);
+    //ESP_LOGI(TAG, "Connecting to %s \n", ssid);
     //--- RTC wakeup on gpio 33 (wired to button)
     esp_sleep_enable_ext1_wakeup(BUTTON_WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
     max7219.Begin();
-         max7219.DisplayText(( char *)"no cue", 1);
-    
+    max7219.DisplayText((char *)"no cue", 1);
+
     // setMacId();
     //initMAX7219(); // (1) --- init MAX7219-------------------------------
 
@@ -419,7 +469,6 @@ void setup(void)
     // WiFi.onEvent(WiFiStationConnected, SYSTEM_EVENT_STA_CONNECTED);
 
     initWifi(); // (3)------init WiFi---------------------------------
- 
 
     initAdapterAndAddDevices(); // (4) -- intiAdapterAndAddDevices()------------------
     ThingPropertyValue initialOn = {.boolean = true};
